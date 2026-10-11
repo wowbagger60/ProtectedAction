@@ -1,0 +1,231 @@
+<style>
+    * { box-sizing: border-box; }
+    html { width: 100%; height: 100%; overflow: hidden; }
+    body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        padding: 8px;
+        overflow: hidden;
+        color: var(--content-color, inherit);
+        user-select: none;
+    }
+    .protected-action {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 7px;
+        width: 100%;
+        height: 100%;
+        min-height: 0;
+    }
+    .module-message {
+        flex: 0 0 auto;
+        width: 100%;
+        min-height: 20px;
+        text-align: center;
+        font-size: clamp(16px, 2.4vw, 20px);
+        font-weight: 400;
+        line-height: 1.2;
+    }
+    .keypad {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-rows: repeat(4, minmax(0, 1fr));
+        gap: 5px;
+        width: 100%;
+        flex: 1 1 auto;
+        min-width: 0;
+        min-height: 0;
+    }
+    .key {
+        min-width: 0;
+        min-height: 0;
+        padding: 2px;
+        border: 1px solid color-mix(in srgb, currentColor 24%, transparent);
+        border-radius: 7px;
+        background: color-mix(in srgb, currentColor 8%, transparent);
+        color: inherit;
+        font: inherit;
+        font-size: clamp(16px, 3vw, 21px);
+        font-weight: 500;
+        cursor: pointer;
+        touch-action: manipulation;
+        -webkit-tap-highlight-color: transparent;
+    }
+    .key:active:not(:disabled) {
+        transform: scale(0.95);
+        background: color-mix(in srgb, currentColor 17%, transparent);
+    }
+    .key:disabled {
+        cursor: default;
+        opacity: 0.3;
+    }
+    .key-command {
+        font-size: clamp(14px, 2.5vw, 18px);
+        font-weight: 650;
+    }
+    @media (max-height: 220px) {
+        body { padding: 5px; }
+        .protected-action { gap: 4px; }
+        .module-message { min-height: 16px; font-size: 14px; }
+        .keypad { gap: 3px; grid-template-rows: repeat(4, minmax(0, 1fr)); }
+        .key { border-radius: 5px; font-size: 15px; }
+    }
+</style>
+
+<div class="protected-action">
+    <div id="module-message" class="module-message"></div>
+    <section class="keypad" aria-label="PIN keypad">
+        <button class="key key-digit" data-digit="7">7</button>
+        <button class="key key-digit" data-digit="8">8</button>
+        <button class="key key-digit" data-digit="9">9</button>
+        <button class="key key-digit" data-digit="4">4</button>
+        <button class="key key-digit" data-digit="5">5</button>
+        <button class="key key-digit" data-digit="6">6</button>
+        <button class="key key-digit" data-digit="1">1</button>
+        <button class="key key-digit" data-digit="2">2</button>
+        <button class="key key-digit" data-digit="3">3</button>
+        <button id="clear" class="key key-command">C</button>
+        <button class="key key-digit" data-digit="0">0</button>
+        <button id="enter" class="key key-command">E</button>
+    </section>
+</div>
+
+<script>
+    const messageTexts = {
+        READY: 'Enter PIN',
+        INPUT_ACTIVE: 'PIN entry in progress',
+        PIN_INVALID: 'PIN invalid',
+        ACTION_EXECUTED: 'Action executed',
+        ACTION_FAILED: 'Action failed',
+        TEMPORARILY_LOCKED: 'Temporarily locked',
+        PERMANENTLY_LOCKED: 'Permanently locked',
+        RECOVERY_ACTIVE: 'Enter Super PIN',
+        SUPER_PIN_INVALID: 'Super PIN invalid',
+        UNLOCKED: 'Unlocked',
+        VISUALIZATION_REQUIRED: 'Use the built-in PIN pad'
+    };
+    let tileState = {
+        Message: 'READY', InputActive: false, Locked: false, LockUntil: 0,
+        ServerTime: 0, receivedAt: Date.now(), Scramble: false, ScrambleInterval: 0
+    };
+    let scrambleTimer = null;
+    let refreshRequested = false;
+    let pendingNavigationRequest = null;
+    let pendingNavigationTimer = null;
+
+    // Symcon supplies the content margins relative to the complete tile.
+    // The title and its controls occupy the top margin.
+    function applyContentBounds() {
+        const parameters = new URLSearchParams(window.location.search);
+        const number = (name) => {
+            const value = Number.parseFloat(parameters.get(name) ?? '0');
+            return Number.isFinite(value) ? Math.max(0, value) : 0;
+        };
+        const top = number('margintop');
+        const side = number('marginside');
+        const bottom = number('marginbottom');
+        document.body.style.padding =
+            `${top + 8}px ${side + 8}px ${bottom + 8}px ${side + 8}px`;
+    }
+    applyContentBounds();
+
+    document.querySelectorAll('.key-digit').forEach((button) => {
+        button.addEventListener('click', () => {
+            tileState.InputActive = true;
+            tileState.Message = 'INPUT_ACTIVE';
+            renderMessage();
+            requestAction('Digit', Number(button.dataset.digit));
+        });
+    });
+    document.getElementById('clear').addEventListener('click', () => requestAction('Clear', true));
+    document.getElementById('enter').addEventListener('click', () => {
+        pendingNavigationRequest = createRequestID();
+        if (pendingNavigationTimer !== null) clearTimeout(pendingNavigationTimer);
+        pendingNavigationTimer = setTimeout(() => {
+            pendingNavigationRequest = null;
+            pendingNavigationTimer = null;
+        }, 10000);
+        requestAction('Enter', pendingNavigationRequest);
+    });
+
+    function handleMessage(data) {
+        const update = typeof data === 'string' ? JSON.parse(data) : data;
+        if (update.Navigation) {
+            handleNavigation(update.Navigation);
+            return;
+        }
+        const wasInputActive = tileState.InputActive;
+        tileState = Object.assign(tileState, update, {receivedAt: Date.now()});
+        refreshRequested = false;
+        renderMessage();
+        document.querySelectorAll('.key').forEach((button) => button.disabled = Boolean(tileState.Locked));
+        configureScrambleTimer();
+        if (tileState.Scramble && !tileState.InputActive &&
+            (wasInputActive || !document.body.dataset.initialized)) {
+            scrambleDigits();
+        }
+        document.body.dataset.initialized = 'true';
+    }
+
+    function createRequestID() {
+        if (crypto.randomUUID) return crypto.randomUUID();
+        const bytes = new Uint8Array(16);
+        crypto.getRandomValues(bytes);
+        return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+    }
+
+    function handleNavigation(navigation) {
+        if (!pendingNavigationRequest || navigation.RequestID !== pendingNavigationRequest) return;
+        pendingNavigationRequest = null;
+        if (pendingNavigationTimer !== null) clearTimeout(pendingNavigationTimer);
+        pendingNavigationTimer = null;
+        const objectID = Number(navigation.ObjectID);
+        if (Number.isInteger(objectID) && objectID > 0) openObject(objectID);
+    }
+
+    function renderMessage() {
+        document.getElementById('module-message').innerText =
+            messageTexts[tileState.Message] || tileState.Message || '';
+    }
+
+    function scrambleDigits() {
+        if (!tileState.Scramble || tileState.InputActive) return;
+        const buttons = Array.from(document.querySelectorAll('.key-digit'));
+        const digits = buttons.map((button) => button.dataset.digit);
+        for (let i = digits.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [digits[i], digits[j]] = [digits[j], digits[i]];
+        }
+        buttons.forEach((button, index) => {
+            button.dataset.digit = digits[index];
+            button.innerText = digits[index];
+        });
+    }
+
+    function configureScrambleTimer() {
+        if (scrambleTimer !== null) clearInterval(scrambleTimer);
+        scrambleTimer = null;
+        if (tileState.Scramble && tileState.ScrambleInterval > 0) {
+            scrambleTimer = setInterval(() => {
+                if (!tileState.InputActive) scrambleDigits();
+            }, tileState.ScrambleInterval * 1000);
+        }
+    }
+
+    function updateCountdown() {
+        if (!tileState.LockUntil || tileState.LockUntil <= tileState.ServerTime) return;
+        const estimatedServerTime = tileState.ServerTime +
+            Math.floor((Date.now() - tileState.receivedAt) / 1000);
+        const remaining = Math.max(0, tileState.LockUntil - estimatedServerTime);
+        if (remaining > 0) {
+            document.getElementById('module-message').innerText =
+                messageTexts.TEMPORARILY_LOCKED + ' (' + remaining + ' s)';
+        } else if (!refreshRequested) {
+            refreshRequested = true;
+            requestAction('Refresh', true);
+        }
+    }
+    setInterval(updateCountdown, 250);
+</script>

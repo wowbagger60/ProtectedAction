@@ -1,0 +1,26 @@
+{
+    "id": "{84C928B5-BB9D-4E25-8FC4-574B1F2B945E}",
+    "name": "Protected Action",
+    "type": 3,
+    "vendor": "Cassanis Automation",
+    "aliases": [
+        "Protected Action"
+    ],
+    "parentRequirements": [],
+    "childRequirements": [],
+    "implemented": [],
+    "prefix": "PRACT",
+    "status": [
+        {
+            "code": 201,
+            "icon": "error",
+            "caption": "Sodium extension is not available"
+        },
+        {
+            "code": 202,
+            "icon": "error",
+            "caption": "Invalid PIN length configuration"
+        }
+    ],
+    "url": "https://www.cassanisautomation.fr"
+}

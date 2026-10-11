@@ -1,0 +1,12 @@
+{
+    "id": "{7A69147E-7D84-4C83-AF2D-5D8C90BDF013}",
+    "author": "Ulrich Schweizer",
+    "name": "ProtectedAction",
+    "url": "https://www.cassanisautomation.fr",
+    "compatibility": {
+        "version": "8.1"
+    },
+    "version": "1.0",
+    "build": 2,
+    "date": 1791676800
+}

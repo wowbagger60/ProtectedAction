@@ -1,0 +1,82 @@
+{
+    "elements": [
+        {
+            "type": "NumberSpinner",
+            "name": "MinimumPINLength",
+            "caption": "Minimum PIN length",
+            "minimum": 4,
+            "maximum": 16
+        },
+        {
+            "type": "NumberSpinner",
+            "name": "MaximumPINLength",
+            "caption": "Maximum PIN length",
+            "minimum": 4,
+            "maximum": 16
+        },
+        {
+            "type": "NumberSpinner",
+            "name": "DelayAfterFailures",
+            "caption": "Start delay after failed attempts",
+            "minimum": 1,
+            "maximum": 20
+        },
+        {
+            "type": "NumberSpinner",
+            "name": "BaseDelay",
+            "caption": "Base delay",
+            "suffix": " seconds",
+            "minimum": 1,
+            "maximum": 3600
+        },
+        {
+            "type": "NumberSpinner",
+            "name": "PermanentLockAfter",
+            "caption": "Permanently lock after failed attempts",
+            "minimum": 1,
+            "maximum": 100
+        },
+        {
+            "type": "NumberSpinner",
+            "name": "InputTimeout",
+            "caption": "Input timeout",
+            "suffix": " seconds",
+            "minimum": 5,
+            "maximum": 300
+        },
+        {
+            "type": "NumberSpinner",
+            "name": "RecoveryAttempts",
+            "caption": "Recovery attempts",
+            "minimum": 1,
+            "maximum": 20
+        },
+        {
+            "type": "NumberSpinner",
+            "name": "MessageDuration",
+            "caption": "Display duration for temporary messages",
+            "suffix": " seconds",
+            "minimum": 1,
+            "maximum": 60
+        },
+        {
+            "type": "CheckBox",
+            "name": "ScrambleKeypad",
+            "caption": "Scramble digits"
+        },
+        {
+            "type": "NumberSpinner",
+            "name": "ScrambleInterval",
+            "caption": "Scramble interval while idle (0 = disabled)",
+            "suffix": " seconds",
+            "minimum": 0,
+            "maximum": 3600
+        }
+    ],
+    "actions": [
+        {
+            "type": "Label",
+            "caption": "Actions are imported from tested scripts or registered as visualization targets through PRACT_RegisterAction()."
+        }
+    ]
+}
