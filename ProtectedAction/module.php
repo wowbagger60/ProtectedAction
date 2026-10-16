@@ -4,7 +4,14 @@ declare(strict_types=1);
 
 class ProtectedAction extends IPSModuleStrict
 {
-    private const FORMAT_VERSION = 5;
+    private const FORMAT_VERSION = 6;
+    // Keep these values and their semantics stable across compatible module updates.
+    private const KDF_VERSION = 1;
+    private const KDF_OPSLIMIT = 2;
+    private const KDF_MEMLIMIT = 67108864; // 64 MiB; part of KDF version 1
+    private const MIN_PIN_LENGTH = 4;
+    private const MIN_PATTERN_LENGTH = 2;
+    private const MAX_CODE_LENGTH = 16;
     private const MODULE_ID = '{84C928B5-BB9D-4E25-8FC4-574B1F2B945E}';
     private const INPUT_BUFFER = 'Input';
     private const INPUT_TIME_BUFFER = 'InputTime';
@@ -21,10 +28,7 @@ class ProtectedAction extends IPSModuleStrict
         $this->SetVisualizationType(1);
 
         $this->RegisterPropertyInteger('InputMode', 0); // 0 = PIN, 1 = pattern
-        $this->RegisterPropertyInteger('MinimumPINLength', 4);
-        $this->RegisterPropertyInteger('MaximumPINLength', 16);
-        $this->RegisterPropertyInteger('MinimumSuperPINLength', 4);
-        $this->RegisterPropertyInteger('MaximumSuperPINLength', 16);
+        $this->RegisterPropertyBoolean('BindToModuleCode', true);
         $this->RegisterPropertyInteger('DelayAfterFailures', 3);
         $this->RegisterPropertyInteger('BaseDelay', 20);
         $this->RegisterPropertyInteger('PermanentLockAfter', 5);
@@ -35,6 +39,7 @@ class ProtectedAction extends IPSModuleStrict
         $this->RegisterPropertyInteger('ScrambleInterval', 0);
 
         $this->RegisterAttributeInteger('RegisteredInputMode', -1);
+        $this->RegisterAttributeInteger('RegisteredCodeBinding', -1);
         $this->RegisterAttributeString('Actions', '[]');
         $this->RegisterAttributeString('Recovery', '');
         $this->RegisterAttributeInteger('FailedAttempts', 0);
@@ -59,12 +64,16 @@ class ProtectedAction extends IPSModuleStrict
 
         if (!$this->CryptoAvailable()) {
             $this->SetStatus(201);
-            $this->SetSummary('Sodium extension is not available');
+            $this->SetSummary($this->Translate('Sodium extension is not available'));
             return;
         }
         // Existing registrations predate InputMode and therefore always belong to PIN mode.
         if ($this->ReadAttributeInteger('RegisteredInputMode') === -1 && $this->HasRegistrations()) {
             $this->WriteAttributeInteger('RegisteredInputMode', 0);
+        }
+        // All registrations created before this option was introduced are code-bound.
+        if ($this->ReadAttributeInteger('RegisteredCodeBinding') === -1 && $this->HasRegistrations()) {
+            $this->WriteAttributeInteger('RegisteredCodeBinding', 1);
         }
         $error = $this->ConfigurationError();
         if ($error !== '') {
@@ -95,11 +104,8 @@ class ProtectedAction extends IPSModuleStrict
         foreach ($form['elements'] as &$element) {
             switch ($element['name'] ?? '') {
                 case 'InputMode':
+                case 'BindToModuleCode':
                     $element['enabled'] = !$this->ModeIsLocked();
-                    break;
-                case 'MinimumPINLength':
-                case 'MaximumPINLength':
-                    $element['minimum'] = $mode === 1 ? 2 : 4;
                     break;
                 case 'ScrambleKeypad':
                 case 'ScrambleInterval':
@@ -121,8 +127,6 @@ class ProtectedAction extends IPSModuleStrict
             case 'InputModePreview':
                 if (!$this->ModeIsLocked()) {
                     $pattern = (int) $Value === 1;
-                    $this->UpdateFormField('MinimumPINLength', 'minimum', $pattern ? 2 : 4);
-                    $this->UpdateFormField('MaximumPINLength', 'minimum', $pattern ? 2 : 4);
                     $this->UpdateFormField('ScrambleKeypad', 'visible', !$pattern);
                     $this->UpdateFormField('ScrambleInterval', 'visible', !$pattern);
                 }
@@ -222,7 +226,7 @@ class ProtectedAction extends IPSModuleStrict
         sodium_memzero($payload);
         ksort($actions, SORT_STRING);
         $this->WriteActions($actions);
-        $this->LockInputMode();
+        $this->LockRegistrationOptions();
         sodium_memzero($PIN);
         $this->UpdateSummary();
         $this->PublishStatus();
@@ -253,7 +257,7 @@ class ProtectedAction extends IPSModuleStrict
 
     public function RegisterSuperPIN(string $PIN): bool
     {
-        if (!$this->CryptoAvailable() || $this->ConfigurationError() !== '' || !$this->ValidPIN($PIN, true)) {
+        if (!$this->CryptoAvailable() || $this->ConfigurationError() !== '' || !$this->ValidPIN($PIN)) {
             return false;
         }
         $payload = json_encode(['format' => self::FORMAT_VERSION, 'purpose' => 'recovery'], JSON_THROW_ON_ERROR);
@@ -262,7 +266,7 @@ class ProtectedAction extends IPSModuleStrict
             JSON_THROW_ON_ERROR
         ));
         sodium_memzero($PIN);
-        $this->LockInputMode();
+        $this->LockRegistrationOptions();
         $this->PublishStatus();
         return true;
     }
@@ -279,7 +283,7 @@ class ProtectedAction extends IPSModuleStrict
             ($Digit === 0 || str_ends_with($input, (string) $Digit))) {
             return false;
         }
-        $maximum = $this->ReadPropertyInteger($recovery ? 'MaximumSuperPINLength' : 'MaximumPINLength');
+        $maximum = self::MAX_CODE_LENGTH;
         if (strlen($input) >= $maximum) {
             return false;
         }
@@ -411,6 +415,7 @@ class ProtectedAction extends IPSModuleStrict
         $this->WriteAttributeString('Actions', '[]');
         $this->WriteAttributeString('Recovery', '');
         $this->WriteAttributeInteger('RegisteredInputMode', -1);
+        $this->WriteAttributeInteger('RegisteredCodeBinding', -1);
         $this->WriteAttributeInteger('FailedAttempts', 0);
         $this->WriteAttributeInteger('LockUntil', 0);
         $this->WriteAttributeBoolean('PermanentlyLocked', false);
@@ -434,7 +439,9 @@ class ProtectedAction extends IPSModuleStrict
             'FailedAttempts'    => $this->ReadAttributeInteger('FailedAttempts'),
             'RecoveryDefined'   => $this->ReadAttributeString('Recovery') !== '',
             'InputMode'         => $this->ReadPropertyInteger('InputMode'),
-            'InputModeLocked'   => $this->ModeIsLocked()
+            'InputModeLocked'   => $this->ModeIsLocked(),
+            'CodeBound'         => $this->ReadPropertyBoolean('BindToModuleCode'),
+            'CodeBindingLocked' => $this->ModeIsLocked()
         ]), JSON_THROW_ON_ERROR);
     }
 
@@ -580,6 +587,8 @@ class ProtectedAction extends IPSModuleStrict
         sodium_memzero($key);
         return [
             'format' => self::FORMAT_VERSION,
+            'kdf' => self::KDF_VERSION,
+            'codeBound' => $this->ReadPropertyBoolean('BindToModuleCode'),
             'salt' => base64_encode($salt),
             'nonce' => base64_encode($nonce),
             'cipherText' => base64_encode($cipherText)
@@ -588,7 +597,9 @@ class ProtectedAction extends IPSModuleStrict
 
     private function Decrypt(string $PIN, array $Record, string $Purpose): ?string
     {
-        if (($Record['format'] ?? null) !== self::FORMAT_VERSION) {
+        if (($Record['format'] ?? null) !== self::FORMAT_VERSION ||
+            ($Record['kdf'] ?? null) !== self::KDF_VERSION ||
+            ($Record['codeBound'] ?? null) !== $this->ReadPropertyBoolean('BindToModuleCode')) {
             return null;
         }
         $salt = base64_decode((string) ($Record['salt'] ?? ''), true);
@@ -611,13 +622,19 @@ class ProtectedAction extends IPSModuleStrict
     {
         $kind = $Purpose === 'recovery' ? 'super-pin' :
             ($this->ReadPropertyInteger('InputMode') === 1 ? 'pattern' : 'pin');
-        $material = $kind . chr(0) . $PIN . chr(0) . $this->CodeHash();
+        // Update-resistant records deliberately exclude module contents, version, build,
+        // filename, instance ID and filesystem path. Format/KDF compatibility must remain stable.
+        $binding = $this->ReadPropertyBoolean('BindToModuleCode')
+            ? 'code-bound' . chr(0) . $this->CodeHash()
+            : 'update-independent';
+        $material = 'ProtectedAction-KDF-' . self::KDF_VERSION . chr(0) .
+            $kind . chr(0) . $PIN . chr(0) . $binding;
         $key = sodium_crypto_pwhash(
             SODIUM_CRYPTO_AEAD_XCHACHA20POLY1305_IETF_KEYBYTES,
             $material,
             $Salt,
-            SODIUM_CRYPTO_PWHASH_OPSLIMIT_INTERACTIVE,
-            SODIUM_CRYPTO_PWHASH_MEMLIMIT_INTERACTIVE,
+            self::KDF_OPSLIMIT,
+            self::KDF_MEMLIMIT,
             SODIUM_CRYPTO_PWHASH_ALG_ARGON2ID13
         );
         sodium_memzero($material);
@@ -636,22 +653,23 @@ class ProtectedAction extends IPSModuleStrict
 
     private function AssociatedData(string $Purpose): string
     {
-        return self::MODULE_ID . chr(0) . self::FORMAT_VERSION . chr(0) . $Purpose;
+        return self::MODULE_ID . chr(0) . self::FORMAT_VERSION . chr(0) .
+            self::KDF_VERSION . chr(0) . $Purpose . chr(0) .
+            (int) $this->ReadPropertyBoolean('BindToModuleCode');
     }
 
-    private function ValidPIN(string $PIN, bool $Recovery = false): bool
+    private function ValidPIN(string $PIN): bool
     {
-        $minimum = $this->ReadPropertyInteger($Recovery ? 'MinimumSuperPINLength' : 'MinimumPINLength');
-        $maximum = $this->ReadPropertyInteger($Recovery ? 'MaximumSuperPINLength' : 'MaximumPINLength');
-        return preg_match('/^[0-9]+$/D', $PIN) === 1 && strlen($PIN) >= $minimum && strlen($PIN) <= $maximum;
+        return preg_match('/^[0-9]+$/D', $PIN) === 1 &&
+            strlen($PIN) >= self::MIN_PIN_LENGTH && strlen($PIN) <= self::MAX_CODE_LENGTH;
     }
 
     private function NormalizeAccessCode(string $Code, bool $Recovery): ?string
     {
         if ($Recovery || $this->ReadPropertyInteger('InputMode') === 0) {
-            return $this->ValidPIN($Code, $Recovery) ? $Code : null;
+            return $this->ValidPIN($Code) ? $Code : null;
         }
-        $maximum = $this->ReadPropertyInteger('MaximumPINLength');
+        $maximum = self::MAX_CODE_LENGTH;
         if (strlen($Code) > $maximum || preg_match('/^[1-9]+$/D', $Code) !== 1 ||
             preg_match('/(.)\\1/', $Code) === 1) {
             return null;
@@ -674,7 +692,7 @@ class ProtectedAction extends IPSModuleStrict
                 return null;
             }
         }
-        return strlen($normalized) >= $this->ReadPropertyInteger('MinimumPINLength') ? $normalized : null;
+        return strlen($normalized) >= self::MIN_PATTERN_LENGTH ? $normalized : null;
     }
 
     private function HasRegistrations(): bool
@@ -684,12 +702,14 @@ class ProtectedAction extends IPSModuleStrict
 
     private function ModeIsLocked(): bool
     {
-        return $this->ReadAttributeInteger('RegisteredInputMode') !== -1 || $this->HasRegistrations();
+        return $this->ReadAttributeInteger('RegisteredInputMode') !== -1 ||
+            $this->ReadAttributeInteger('RegisteredCodeBinding') !== -1 || $this->HasRegistrations();
     }
 
-    private function LockInputMode(): void
+    private function LockRegistrationOptions(): void
     {
         $this->WriteAttributeInteger('RegisteredInputMode', $this->ReadPropertyInteger('InputMode'));
+        $this->WriteAttributeInteger('RegisteredCodeBinding', (int) $this->ReadPropertyBoolean('BindToModuleCode'));
         $this->ReloadForm();
     }
 
@@ -697,24 +717,22 @@ class ProtectedAction extends IPSModuleStrict
     {
         $mode = $this->ReadPropertyInteger('InputMode');
         if (!in_array($mode, [0, 1], true)) {
-            return 'Invalid input mode';
+            return $this->Translate('Invalid input mode');
         }
         $registeredMode = $this->ReadAttributeInteger('RegisteredInputMode');
         if ($registeredMode === -1 && $this->HasRegistrations()) {
             $registeredMode = 0;
         }
         if ($registeredMode !== -1 && $registeredMode !== $mode) {
-            return 'Input mode is locked. Restore the registered mode or reset all registrations.';
+            return $this->Translate('Input mode is locked. Restore the registered mode or reset all registrations.');
         }
-        $minimum = $this->ReadPropertyInteger('MinimumPINLength');
-        $maximum = $this->ReadPropertyInteger('MaximumPINLength');
-        if ($minimum < ($mode === 1 ? 2 : 4) || $maximum > 16 || $minimum > $maximum) {
-            return 'Invalid access code length configuration';
+        $registeredBinding = $this->ReadAttributeInteger('RegisteredCodeBinding');
+        if ($registeredBinding === -1 && $this->HasRegistrations()) {
+            $registeredBinding = 1;
         }
-        $minimum = $this->ReadPropertyInteger('MinimumSuperPINLength');
-        $maximum = $this->ReadPropertyInteger('MaximumSuperPINLength');
-        if ($minimum < 4 || $maximum > 16 || $minimum > $maximum) {
-            return 'Invalid Super PIN length configuration';
+        if ($registeredBinding !== -1 &&
+            $registeredBinding !== (int) $this->ReadPropertyBoolean('BindToModuleCode')) {
+            return $this->Translate('Code binding is locked. Restore the registered setting or reset all registrations.');
         }
         return '';
     }
@@ -792,13 +810,13 @@ class ProtectedAction extends IPSModuleStrict
     private function UpdateSummary(): void
     {
         if ($this->ReadAttributeBoolean('RecoveryMode')) {
-            $this->SetSummary('Recovery mode');
+            $this->SetSummary($this->Translate('Recovery mode'));
         } elseif ($this->ReadAttributeBoolean('PermanentlyLocked')) {
-            $this->SetSummary('Permanently locked');
+            $this->SetSummary($this->Translate('Permanently locked'));
         } elseif (time() < $this->ReadAttributeInteger('LockUntil')) {
-            $this->SetSummary('Temporarily locked');
+            $this->SetSummary($this->Translate('Temporarily locked'));
         } else {
-            $this->SetSummary(count($this->ReadActions()) . ' protected action(s)');
+            $this->SetSummary(sprintf($this->Translate('Protected actions: %d'), count($this->ReadActions())));
         }
     }
 
@@ -856,7 +874,7 @@ class ProtectedAction extends IPSModuleStrict
     {
         return [
             'InputMode' => $this->ReadPropertyInteger('InputMode'),
-            'MaximumPatternLength' => $this->ReadPropertyInteger('MaximumPINLength'),
+            'MaximumPatternLength' => self::MAX_CODE_LENGTH,
             'InputTimeout' => $this->ReadPropertyInteger('InputTimeout'),
             'Scramble' => $this->ReadPropertyBoolean('ScrambleKeypad'),
             'ScrambleInterval' => $this->ReadPropertyInteger('ScrambleInterval')

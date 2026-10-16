@@ -191,7 +191,7 @@
         refreshRequested = false;
         if (tileState.Locked || wasPatternMode !== isPatternMode()) cancelPattern();
         document.querySelector('.keypad').hidden = isPatternMode();
-        patternPad.hidden = !isPatternMode();
+        patternPad.toggleAttribute('hidden', !isPatternMode());
         patternPad.setAttribute('aria-disabled', String(Boolean(tileState.Locked)));
         renderMessage();
         document.querySelectorAll('.key').forEach((button) => button.disabled = Boolean(tileState.Locked));
@@ -219,6 +219,10 @@
         if (Number.isInteger(objectID) && objectID > 0) openObject(objectID);
     }
 
+    function localize(text) {
+        return typeof translate === 'function' ? translate(text) : text;
+    }
+
     function renderMessage() {
         let text = messageTexts[tileState.Message] || tileState.Message || '';
         if (isPatternMode()) {
@@ -226,7 +230,7 @@
             if (tileState.Message === 'INPUT_ACTIVE') text = 'Pattern entry in progress';
             if (tileState.Message === 'PIN_INVALID') text = 'Pattern invalid';
         }
-        document.getElementById('module-message').innerText = text;
+        document.getElementById('module-message').innerText = localize(text);
     }
 
     function scrambleDigits() {
@@ -260,7 +264,7 @@
         const remaining = Math.max(0, tileState.LockUntil - estimatedServerTime);
         if (remaining > 0) {
             document.getElementById('module-message').innerText =
-                messageTexts.TEMPORARILY_LOCKED + ' (' + remaining + ' s)';
+                localize(messageTexts.TEMPORARILY_LOCKED) + ' (' + remaining + ' s)';
         } else if (!refreshRequested) {
             refreshRequested = true;
             requestAction('Refresh', true);
@@ -273,6 +277,8 @@
     const patternPad = document.getElementById('pattern-pad');
     const patternPoints = document.getElementById('pattern-points');
     const patternTrail = document.getElementById('pattern-trail');
+    patternPad.setAttribute('aria-label', localize('Pattern input: hold, draw, then release'));
+    document.querySelector('.keypad').setAttribute('aria-label', localize('PIN keypad'));
     const svgNS = 'http://www.w3.org/2000/svg';
     const points = Array.from({length: 9}, (_, i) => ({
         number: String(i + 1), x: 60 + (i % 3) * 120, y: 60 + Math.floor(i / 3) * 120
@@ -400,7 +406,7 @@
         patternPad.setPointerCapture(event.pointerId);
         samplePattern(patternPosition(event));
         refreshPatternTimeout();
-        document.getElementById('module-message').innerText = 'Pattern entry in progress';
+        document.getElementById('module-message').innerText = localize('Pattern entry in progress');
     });
     patternPad.addEventListener('pointermove', event => {
         if (event.pointerId !== patternPointer) return;

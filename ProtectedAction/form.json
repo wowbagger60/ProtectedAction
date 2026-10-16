@@ -17,42 +17,23 @@
             "onChange": "IPS_RequestAction($id, \"InputModePreview\", $InputMode);"
         },
         {
+            "type": "CheckBox",
+            "name": "BindToModuleCode",
+            "caption": "Require re-registration after module code changes"
+        },
+        {
             "type": "Label",
-            "caption": "The input mode is locked after the first action or Super PIN registration. Changing it requires a reset."
+            "caption": "Input mode and code binding are locked after the first action or Super PIN registration. Changing either requires a reset."
+        },
+        {
+            "type": "Label",
+            "caption": "When code binding is disabled, registrations survive compatible module updates. Code binding remains enabled by default."
         },
         {
             "type": "Label",
             "name": "ConfigurationError",
             "caption": "",
             "visible": false
-        },
-        {
-            "type": "NumberSpinner",
-            "name": "MinimumPINLength",
-            "caption": "Minimum access code length",
-            "minimum": 4,
-            "maximum": 16
-        },
-        {
-            "type": "NumberSpinner",
-            "name": "MaximumPINLength",
-            "caption": "Maximum access code length",
-            "minimum": 4,
-            "maximum": 16
-        },
-        {
-            "type": "NumberSpinner",
-            "name": "MinimumSuperPINLength",
-            "caption": "Minimum Super PIN length",
-            "minimum": 4,
-            "maximum": 16
-        },
-        {
-            "type": "NumberSpinner",
-            "name": "MaximumSuperPINLength",
-            "caption": "Maximum Super PIN length",
-            "minimum": 4,
-            "maximum": 16
         },
         {
             "type": "NumberSpinner",
@@ -123,7 +104,7 @@
         {
             "code": 202,
             "icon": "error",
-            "caption": "Invalid configuration or locked input mode"
+            "caption": "Invalid configuration or locked registration options"
         },
         {
             "code": 201,

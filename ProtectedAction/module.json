@@ -19,7 +19,7 @@
         {
             "code": 202,
             "icon": "error",
-            "caption": "Invalid configuration or locked input mode"
+            "caption": "Invalid configuration or locked registration options"
         }
     ],
     "url": "https://www.cassanisautomation.fr"

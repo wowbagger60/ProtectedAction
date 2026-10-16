@@ -6,9 +6,34 @@ visualization target.
 
 This module is not a replacement for IP-Symcon access controls or a complete alarm system.
 
-## New in 1.1 Build 1: pattern input
+## Setup and code binding
 
-Select **Input mode → Pattern** in the instance configuration and apply before registering any actions. PIN remains the default. The first action **or Super PIN** registration freezes the input mode until `PRACT_Reset()`. Removing the last action does not release this lock. API changes cannot bypass it: an incompatible mode disables input and registration until the original mode is restored or all registrations are explicitly reset.
+1. Select **PIN** or **Pattern** input mode.
+2. Set **Require re-registration after module code changes**. It is **enabled by default**.
+3. Apply the configuration, then register actions and the Super PIN.
+
+| Code binding | Behaviour after module code changes |
+| --- | --- |
+| Enabled (default) | PHP and tile contents participate in key derivation. Changes invalidate existing registrations. Reset and re-register. |
+| Disabled | Encrypted actions and the Super PIN survive compatible updates. Module contents are excluded from key derivation. |
+
+**Input mode and code binding are locked after the first action or Super PIN registration.** Removing the final action does not release either lock. Changing either option requires an explicit reset:
+
+```php
+PRACT_Reset(12345);
+```
+
+Reset deletes all actions, the Super PIN, locks and counters. Select and apply the desired options before registering again. Changing a locked option through the API also blocks input and registration. Restore the original option value to continue using the existing registrations.
+
+Without code binding, authenticated encryption remains in place, but protection against module code changes is intentionally removed. This is a convenience choice, for example for unlocking edit controls. Update resistance requires unchanged or explicitly compatible data formats and key derivation; it cannot guarantee compatibility with arbitrary future format changes.
+
+### Upgrading to 1.1 Build 3
+
+This build removes four length settings and introduces optional code binding with a new encryption format. **Registrations from earlier builds require a one-time reset and re-registration.** No automatic decryption or conversion is performed, and existing code-bound records are never silently treated as update-independent records.
+
+For future compatible updates without re-registration, disable code binding **after reset and before the first registration**. The option cannot migrate or unlock existing code-bound data.
+
+## Pattern input
 
 Point numbering, from top left to bottom right:
 
@@ -26,28 +51,27 @@ var_dump(PRACT_RegisterAction(12345, '13971', 67890, []));
 
 The object may be a tested script or a visualization target; targets require an empty parameter array. Remove the code from the registration script afterwards.
 
-- Only digits `1`–`9`; no zero, stars, or consecutive repeated points. Returning to a previous point after other points is allowed (`131`).
-- Exact straight-line midpoints are inserted server-side for registration and verification: `13` becomes `123`, `19` becomes `159`, and `13971` becomes `123698741`. `16` and `15` have no midpoint. Midpoints are inserted even if previously visited; this differs from Android patterns.
-- Length settings count the **expanded sequence**: pattern range 2–16, default 4–16. The square therefore counts nine visits. Registrations with the same expanded sequence replace the same action.
-- Hold the left mouse button, touch, or pen and draw. Releasing submits the complete gesture; no Enter button is needed.
-- Fixed hit areas, exact point sequence, no tolerant recognition. Additional detected points invalidate the pattern.
-- No point highlighting or visible sequence. The movement trail fades over approximately 650 ms and is cleared on release.
-- Cancelled and empty gestures are not failed attempts. A completed wrong or overlong gesture counts once. Existing lockout rules apply.
-- Partial gestures stay local to the client. Only the completed sequence is submitted; the server's `InputActive` field therefore does not report a local gesture in progress. The configured input timeout cancels an inactive gesture.
-- Recovery always displays a numeric keypad. The Super PIN has separate length limits (default 4–16), independent of pattern limits. The existing scrambling option also applies to the recovery keypad.
+- Digits `1`–`9` only; no zero, stars, or consecutive repeated points. Returning to a previously visited point is allowed (`131`).
+- Exact straight-line midpoints are inserted server-side for registration and verification: `13` becomes `123`, `19` becomes `159`, and `13971` becomes `123698741`. `16` and `15` have no midpoint. Midpoints are inserted even if previously visited, unlike Android patterns.
+- Registrations with the same expanded sequence replace the same action.
+- Hold the left mouse button, touch, or pen and draw. Releasing submits the gesture, without an Enter button.
+- Square drawing area, fixed hit areas, exact point sequence, no tolerant recognition. Additional detected points invalidate the pattern.
+- No point highlighting or visible sequence. The trail fades over approximately 650 ms and is cleared on release.
+- Cancelled and empty gestures are not failed attempts. A completed wrong or overlong gesture counts once.
+- Partial gestures stay local; only the completed sequence is submitted. The server's `InputActive` field does not report a local gesture in progress. The input timeout cancels an inactive gesture.
+- Recovery always displays a numeric keypad. Existing scrambling settings also apply to this recovery keypad.
 
-`PRACT_Unregister()` accepts the same pattern as registration. In pattern mode the existing `PRACT_InputDigit()` API accepts points `1`–`9`, rejects zero and consecutive repetitions, and `PRACT_Enter()` submits the sequence. Client-specific navigation still requires the built-in tile. There is no additional public registration method.
+`PRACT_Unregister()` accepts the same pattern as registration. In pattern mode, `PRACT_InputDigit()` accepts points `1`–`9`, rejects zero and consecutive repetitions, and `PRACT_Enter()` submits. Client-specific navigation still requires the built-in tile. PIN, pattern and recovery have separate key-derivation domains.
 
-**Updating:** PHP, tile code, and the encryption format change in this build. Reset and re-register all actions and the Super PIN. The planned update-resistant configuration is not included yet. PIN, pattern and recovery use distinct key-derivation domains.
+## Fixed code lengths
 
-## Important before updating
+| Input | Minimum | Maximum |
+| --- | ---: | ---: |
+| PIN | 4 digits | 16 digits |
+| Pattern | 2 point visits | 16 point visits |
+| Super PIN | 4 digits | 16 digits |
 
-`module.php` and `module.html` are part of the key derivation. Every change to
-either file makes existing actions and the Super PIN undecryptable. After **every module update**, reset the old data and register all actions and the Super PIN again. Migration is intentionally unsupported:
-
-```php
-PRACT_Reset(12345);
-```
+Pattern limits count the **expanded sequence**, including mandatory straight-line midpoints. The square `13971` therefore counts nine visits. The former four length settings are removed. Limits are enforced server-side and for input buffers. Choose a sufficiently long, independent Super PIN.
 
 ## Register a script action
 
@@ -185,8 +209,10 @@ The example assumes that your control passes a single character in `$_IPS['VALUE
 | `RecoveryDefined` | Whether a Super PIN is registered. |
 | `InputMode` | `0` = PIN, `1` = pattern. |
 | `InputModeLocked` | Mode change requires reset. |
+| `CodeBound` | Currently configured code binding. |
+| `CodeBindingLocked` | Binding change requires reset. |
 
-The `Status` string variable (Ident `Status`) publishes the first seven fields above, but not the final five administrative fields. Use `PRACT_GetState()` when those additional fields are needed. For example:
+The `Status` string variable (Ident `Status`) publishes the first seven fields above, but not the final seven administrative fields. Use `PRACT_GetState()` when those additional fields are needed. For example:
 
 ```php
 $state = json_decode(PRACT_GetState(12345), true, 512, JSON_THROW_ON_ERROR);
@@ -200,10 +226,7 @@ if ($state['Locked']) {
 | Option | Default | Meaning |
 | --- | ---: | --- |
 | Input mode | PIN (0) | PIN or pattern (1); frozen after first registration. |
-| Minimum access code length | 4 | Minimum 4 for PIN or 2 for patterns; counts expanded points. |
-| Maximum access code length | 16 | Maximum length, including mandatory pattern midpoints. |
-| Minimum Super PIN length | 4 | Independent numeric recovery limit. |
-| Maximum Super PIN length | 16 | Independent numeric recovery limit. |
+| Require re-registration after module code changes | on | Code binding; disable for registration persistence across compatible updates. Locked after first registration. |
 | Start delay after failed attempts | 3 | Failure threshold for temporary lockouts. |
 | Base delay | 20 s | Base lockout duration. |
 | Permanently lock after failed attempts | 5 | Failure threshold for permanent lockout. |

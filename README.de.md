@@ -2,9 +2,34 @@
 
 Protected Action führt eine verschlüsselt hinterlegte Aktion erst nach Eingabe des zugehörigen PINs oder Musters aus. Möglich sind importierte Symcon-Scripte und Visualisierungsziele.
 
-## Neu in 1.1 Build 1: Mustereingabe
+## Einrichtung und Versionsbindung
 
-Vor der Registrierung in der Instanz **Input mode → Pattern** wählen und die Änderungen übernehmen. Der Standard bleibt PIN. Der Eingabemodus ist ab der ersten registrierten Aktion **oder dem ersten Super-PIN** gesperrt. Auch das Entfernen der letzten Aktion hebt die Sperre nicht auf; ein Wechsel erfordert `PRACT_Reset()` und Neuregistrierung. Eine Änderung per API wird ebenfalls geprüft: Bei einem unzulässigen Wechsel blockiert das Modul Eingaben und neue Registrierungen. Dann den ursprünglichen Modus wiederherstellen oder ausdrücklich zurücksetzen.
+1. Eingabemodus **PIN** oder **Muster** wählen.
+2. **Bei Änderungen am Modulcode Neuregistrierung verlangen** einstellen. Die Option ist standardmässig **eingeschaltet**.
+3. Konfiguration übernehmen, danach Aktionen und Super-PIN registrieren.
+
+| Codebindung | Verhalten bei Moduländerungen |
+| --- | --- |
+| Eingeschaltet (Standard) | PHP- und Kachelcode fliessen in die Schlüsselableitung ein. Eine Änderung macht bisherige Registrierungen unbrauchbar. Reset und Neuregistrierung sind erforderlich. |
+| Ausgeschaltet | Die verschlüsselten Aktionen und der Super-PIN bleiben bei kompatiblen Updates erhalten. Der Modulcode geht nicht in die Schlüsselableitung ein. |
+
+**Eingabemodus und Codebindung sind nach der ersten Aktion oder Super-PIN-Registrierung gesperrt.** Auch nach dem Entfernen der letzten Aktion bleibt diese Sperre bestehen. Beide Optionen lassen sich erst nach einem ausdrücklichen Reset ändern:
+
+```php
+PRACT_Reset(12345);
+```
+
+Reset löscht alle Aktionen, den Super-PIN, Sperren und Zähler. Danach die gewünschten Optionen wählen, übernehmen und neu registrieren. Änderungen gesperrter Optionen per API werden ebenfalls geprüft und blockieren Eingabe sowie Registrierung. Um die vorhandenen Daten weiterzuverwenden, die ursprüngliche Einstellung wiederherstellen.
+
+Ohne Codebindung bleiben die Aktionen authentifiziert verschlüsselt; der Schutz vor Modulcodeänderungen entfällt jedoch bewusst. Dies ist eine Komfortentscheidung, beispielsweise zum Freigeben des Bearbeitungsmodus. Die Updatebeständigkeit setzt unveränderte oder ausdrücklich kompatibel unterstützte Datenformate und Schlüsselableitung voraus; sie ist keine Garantie für beliebige zukünftige Formatwechsel.
+
+### Umstieg auf 1.1 Build 3
+
+Dieser Build entfernt die vier Längenoptionen und führt die optionale Codebindung mit einem neuen Verschlüsselungsformat ein. **Vorhandene Registrierungen aus früheren Builds müssen einmal zurückgesetzt und neu registriert werden.** Es gibt keine automatische Entschlüsselung oder Umwandlung. Vorhandene Registrierungen werden nicht nachträglich als updatefest behandelt.
+
+Wer künftige kompatible Updates ohne Neuregistrierung nutzen möchte, schaltet die Codebindung **nach dem Reset und vor der ersten Registrierung** aus. Der Schalter ist weder eine nachträgliche Migration noch ein Weg, bestehende gebundene Daten freizugeben.
+
+## Mustereingabe
 
 Die Punktnummerierung läuft zeilenweise von links oben nach rechts unten:
 
@@ -14,38 +39,36 @@ Die Punktnummerierung läuft zeilenweise von links oben nach rechts unten:
 | 4 | 5 | 6 |
 | 7 | 8 | 9 |
 
-Die bestehende API bleibt unverändert. Beispiel für ein geschlossenes Quadrat:
+Im Mustermodus bleibt die Registrierungs-API unverändert. Beispiel für ein geschlossenes Quadrat:
 
 ```php
 var_dump(PRACT_RegisterAction(12345, '13971', 67890, []));
 ```
 
-`67890` kann ein getestetes Script oder ein Visualisierungsziel sein. Für ein Ziel muss das Parameterarray leer sein. Der Zugangscode bleibt ein String; danach aus dem Registrierungsscript entfernen.
+`67890` kann ein getestetes Script oder ein Visualisierungsziel sein. Für ein Ziel muss das Parameterarray leer sein. Den Zugangscode anschliessend aus dem Registrierungsscript entfernen.
 
 - Nur Punkte `1` bis `9`, keine `0`, Sterne oder direkt aufeinanderfolgenden Wiederholungen.
 - Ein Punkt darf nach anderen Punkten erneut besucht werden, etwa `131`.
 - Gerade Zwischenpunkte werden bei Registrierung und Prüfung serverseitig ergänzt: `13` wird `123`, `19` wird `159`, `13971` wird `123698741`. Für `16` und `15` wird nichts ergänzt. Die Ergänzung erfolgt auch bei zuvor besuchten Zwischenpunkten; dies unterscheidet sich vom Android-Muster.
-- Die Längengrenzen gelten für die **ergänzte Punktfolge** (Muster mindestens 2, höchstens 16; Standard 4–16). Das Quadrat zählt daher neun Punktbesuche. Unterschiedlich geschriebene, aber identisch ergänzte Muster bezeichnen dieselbe Aktion.
+- Unterschiedlich geschriebene, aber identisch ergänzte Muster bezeichnen dieselbe Aktion.
 - Maus: linke Taste gedrückt halten und zeichnen. Touch/Stift: aufsetzen und zeichnen. Loslassen prüft die vollständige Geste ohne E-Taste.
-- Feste Trefferflächen, keine tolerante Erkennung. Zusätzliche erfasste Punkte machen die Eingabe ungültig.
-- Die Punkte bleiben unverändert; keine Hervorhebung und keine sichtbare Punktfolge. Die Bewegungsspur verblasst nach etwa 650 ms und verschwindet beim Loslassen vollständig.
-- Abgebrochene oder leere Gesten zählen nicht als Fehlversuch. Ein abgeschlossenes falsches oder zu langes Muster zählt genau einmal. Sperren gelten auch für Muster.
-- Die Musterfolge bleibt während des Zeichnens lokal und wird erst beim Loslassen vollständig übermittelt. `InputActive` in der Server-Statusvariable erfasst daher keine laufende lokale Zeichengeste. Inaktivität über das konfigurierte Eingabe-Timeout verwirft die Geste.
-- Recovery verwendet immer das Zahlenpad und den numerischen Super-PIN. Dieser hat eigene Längengrenzen (Standard 4–16), unabhängig von den Mustergrenzen. Die bestehende Scrambling-Einstellung gilt für das Recovery-Zahlenpad ebenfalls.
+- Quadratische Zeichenfläche, feste Trefferflächen, keine tolerante Erkennung. Zusätzliche erfasste Punkte machen die Eingabe ungültig.
+- Keine Hervorhebung erkannter Punkte und keine sichtbare Punktfolge. Die Bewegungsspur verblasst nach etwa 650 ms und verschwindet beim Loslassen vollständig.
+- Abgebrochene oder leere Gesten zählen nicht als Fehlversuch. Ein abgeschlossenes falsches oder zu langes Muster zählt genau einmal.
+- Die Musterfolge bleibt während des Zeichnens lokal und wird erst beim Loslassen vollständig übermittelt. `InputActive` im Server-Status erfasst deshalb keine laufende lokale Zeichengeste. Inaktivität über das konfigurierte Eingabe-Timeout verwirft die Geste.
+- Recovery verwendet immer das Zahlenpad und den numerischen Super-PIN. Die bestehende Scrambling-Einstellung gilt auch für das Recovery-Zahlenpad.
 
-Es gibt keine zusätzliche öffentliche Registrierungsmethode. `PRACT_Unregister()` akzeptiert dieselbe Musterfolge wie `RegisterAction()`. Über `PRACT_InputDigit()` können im Mustermodus Punkte `1`–`9` eingegeben und mit `PRACT_Enter()` bestätigt werden; `0` und direkte Wiederholungen werden abgelehnt. Clientlokale Navigation bleibt auf die eingebaute Kachel beschränkt.
+`PRACT_Unregister()` akzeptiert dieselbe Musterfolge wie `RegisterAction()`. Über `PRACT_InputDigit()` können im Mustermodus Punkte `1`–`9` eingegeben und mit `PRACT_Enter()` bestätigt werden; `0` und direkte Wiederholungen werden abgelehnt. Clientlokale Navigation bleibt auf die eingebaute Kachel beschränkt. PIN, Muster und Recovery werden bei der Schlüsselableitung getrennt behandelt.
 
-**Updatehinweis:** Dieser Build ändert PHP, Kachel und Verschlüsselungsformat. Alle bisherigen Aktionen und der Super-PIN müssen zurückgesetzt und neu registriert werden. Die geplante updatefeste Konfiguration ist noch nicht enthalten. PIN, Muster und Recovery werden bei der Schlüsselableitung getrennt behandelt.
+## Feste Zugangscode-Längen
 
-## Wichtig bei jedem Update
+| Zugang | Minimum | Maximum |
+| --- | ---: | ---: |
+| PIN | 4 Ziffern | 16 Ziffern |
+| Muster | 2 Punktbesuche | 16 Punktbesuche |
+| Super-PIN | 4 Ziffern | 16 Ziffern |
 
-`module.php` und `module.html` fliessen in die Schlüsselableitung ein. **Nach jedem Update müssen alle Aktionen und der Super-PIN neu registriert werden.** Eine Migration ist bewusst ausgeschlossen.
-
-```php
-PRACT_Reset(12345);
-```
-
-Danach alle Aktionen und den Super-PIN neu registrieren.
+Beim Muster zählt die **ergänzte Punktfolge** einschliesslich gerader Zwischenpunkte. Das Quadrat `13971` zählt daher neun Punktbesuche. Die früheren vier Längeneinstellungen sind entfernt; die Grenzen werden serverseitig und für den Eingabepuffer durchgesetzt. Für den Super-PIN einen ausreichend langen, eigenständigen Code wählen.
 
 ## Script-Aktion registrieren
 
@@ -159,8 +182,10 @@ Das Beispiel setzt voraus, dass das eigene Bedienelement ein Zeichen in `$_IPS['
 | `RecoveryDefined` | Super-PIN registriert. |
 | `InputMode` | `0` = PIN, `1` = Muster. |
 | `InputModeLocked` | Eingabemodus nur nach Reset änderbar. |
+| `CodeBound` | Aktuell konfigurierte Codebindung. |
+| `CodeBindingLocked` | Codebindung nur nach Reset änderbar. |
 
-Die String-Variable `Status` (Ident `Status`) enthält die ersten sieben Felder, nicht aber die letzten fünf administrativen Angaben. Beispiel:
+Die String-Variable `Status` (Ident `Status`) enthält die ersten sieben Felder, nicht aber die letzten sieben administrativen Angaben. Beispiel:
 
 ```php
 $Status = json_decode(PRACT_GetState(12345), true, 512, JSON_THROW_ON_ERROR);
@@ -174,10 +199,7 @@ if ($Status['Locked']) {
 | Einstellung | Standard | Bedeutung |
 | --- | ---: | --- |
 | Eingabemodus | PIN (0) | PIN oder Muster (1); nach erster Registrierung gesperrt. |
-| Minimale Zugangscode-Länge | 4 | PIN mindestens 4; Muster mindestens 2, nach Ergänzung der Zwischenpunkte. |
-| Maximale Zugangscode-Länge | 16 | Höchstlänge; beim Muster einschliesslich ergänzter Zwischenpunkte. |
-| Minimale Super-PIN-Länge | 4 | Numerischer Recovery-Zugang, unabhängig vom Eingabemodus. |
-| Maximale Super-PIN-Länge | 16 | Eigene Höchstlänge des Super-PINs. |
+| Bei Änderungen am Modulcode Neuregistrierung verlangen | ein | Codebindung; ausgeschaltet bleiben Registrierungen bei kompatiblen Updates erhalten. Nach erster Registrierung gesperrt. |
 | Verzögerung nach Fehlversuchen | 3 | Schwelle für temporäre Sperren. |
 | Basisverzögerung | 20 s | Basisdauer einer Sperre. |
 | Permanente Sperre nach Fehlversuchen | 5 | Schwelle für dauerhafte Sperre. |
