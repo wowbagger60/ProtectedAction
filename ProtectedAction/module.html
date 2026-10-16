@@ -72,6 +72,26 @@
         .keypad { gap: 3px; grid-template-rows: repeat(4, minmax(0, 1fr)); }
         .key { border-radius: 5px; font-size: 15px; }
     }
+    [hidden] { display: none !important; }
+    .pattern-pad {
+        display: block;
+        flex: 1 1 0;
+        width: 100%;
+        min-width: 0;
+        min-height: 0;
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+        -webkit-touch-callout: none;
+    }
+    .pattern-point { fill: currentColor; opacity: 0.45; }
+    .pattern-trail {
+        fill: none;
+        stroke: #3b82f6;
+        stroke-width: 4;
+        stroke-linecap: round;
+        pointer-events: none;
+    }
 </style>
 
 <div class="protected-action">
@@ -90,6 +110,11 @@
         <button class="key key-digit" data-digit="0">0</button>
         <button id="enter" class="key key-command">E</button>
     </section>
+    <svg id="pattern-pad" class="pattern-pad" viewBox="0 0 360 360" hidden
+         aria-label="Pattern input: hold, draw, then release" role="img">
+        <g id="pattern-points"></g>
+        <g id="pattern-trail" class="pattern-trail"></g>
+    </svg>
 </div>
 
 <script>
@@ -104,11 +129,12 @@
         RECOVERY_ACTIVE: 'Enter Super PIN',
         SUPER_PIN_INVALID: 'Super PIN invalid',
         UNLOCKED: 'Unlocked',
-        VISUALIZATION_REQUIRED: 'Use the built-in PIN pad'
+        VISUALIZATION_REQUIRED: 'Use the built-in input tile'
     };
     let tileState = {
         Message: 'READY', InputActive: false, Locked: false, LockUntil: 0,
-        ServerTime: 0, receivedAt: Date.now(), Scramble: false, ScrambleInterval: 0
+        ServerTime: 0, receivedAt: Date.now(), Scramble: false, ScrambleInterval: 0,
+        InputMode: 0, RecoveryMode: false, MaximumPatternLength: 16, InputTimeout: 20
     };
     let scrambleTimer = null;
     let refreshRequested = false;
@@ -140,14 +166,17 @@
         });
     });
     document.getElementById('clear').addEventListener('click', () => requestAction('Clear', true));
-    document.getElementById('enter').addEventListener('click', () => {
+    function beginClientRequest() {
         pendingNavigationRequest = createRequestID();
         if (pendingNavigationTimer !== null) clearTimeout(pendingNavigationTimer);
         pendingNavigationTimer = setTimeout(() => {
             pendingNavigationRequest = null;
             pendingNavigationTimer = null;
         }, 10000);
-        requestAction('Enter', pendingNavigationRequest);
+        return pendingNavigationRequest;
+    }
+    document.getElementById('enter').addEventListener('click', () => {
+        requestAction('Enter', beginClientRequest());
     });
 
     function handleMessage(data) {
@@ -157,8 +186,13 @@
             return;
         }
         const wasInputActive = tileState.InputActive;
+        const wasPatternMode = isPatternMode();
         tileState = Object.assign(tileState, update, {receivedAt: Date.now()});
         refreshRequested = false;
+        if (tileState.Locked || wasPatternMode !== isPatternMode()) cancelPattern();
+        document.querySelector('.keypad').hidden = isPatternMode();
+        patternPad.hidden = !isPatternMode();
+        patternPad.setAttribute('aria-disabled', String(Boolean(tileState.Locked)));
         renderMessage();
         document.querySelectorAll('.key').forEach((button) => button.disabled = Boolean(tileState.Locked));
         configureScrambleTimer();
@@ -186,12 +220,17 @@
     }
 
     function renderMessage() {
-        document.getElementById('module-message').innerText =
-            messageTexts[tileState.Message] || tileState.Message || '';
+        let text = messageTexts[tileState.Message] || tileState.Message || '';
+        if (isPatternMode()) {
+            if (tileState.Message === 'READY') text = 'Draw pattern';
+            if (tileState.Message === 'INPUT_ACTIVE') text = 'Pattern entry in progress';
+            if (tileState.Message === 'PIN_INVALID') text = 'Pattern invalid';
+        }
+        document.getElementById('module-message').innerText = text;
     }
 
     function scrambleDigits() {
-        if (!tileState.Scramble || tileState.InputActive) return;
+        if (!tileState.Scramble || tileState.InputActive || isPatternMode()) return;
         const buttons = Array.from(document.querySelectorAll('.key-digit'));
         const digits = buttons.map((button) => button.dataset.digit);
         for (let i = digits.length - 1; i > 0; i--) {
@@ -207,7 +246,7 @@
     function configureScrambleTimer() {
         if (scrambleTimer !== null) clearInterval(scrambleTimer);
         scrambleTimer = null;
-        if (tileState.Scramble && tileState.ScrambleInterval > 0) {
+        if (!isPatternMode() && tileState.Scramble && tileState.ScrambleInterval > 0) {
             scrambleTimer = setInterval(() => {
                 if (!tileState.InputActive) scrambleDigits();
             }, tileState.ScrambleInterval * 1000);
@@ -227,5 +266,182 @@
             requestAction('Refresh', true);
         }
     }
+    function isPatternMode() {
+        return Number(tileState.InputMode) === 1 && !tileState.RecoveryMode;
+    }
+
+    const patternPad = document.getElementById('pattern-pad');
+    const patternPoints = document.getElementById('pattern-points');
+    const patternTrail = document.getElementById('pattern-trail');
+    const svgNS = 'http://www.w3.org/2000/svg';
+    const points = Array.from({length: 9}, (_, i) => ({
+        number: String(i + 1), x: 60 + (i % 3) * 120, y: 60 + Math.floor(i / 3) * 120
+    }));
+    for (const point of points) {
+        const circle = document.createElementNS(svgNS, 'circle');
+        circle.setAttribute('cx', point.x);
+        circle.setAttribute('cy', point.y);
+        circle.setAttribute('r', 8);
+        circle.setAttribute('class', 'pattern-point');
+        patternPoints.append(circle);
+    }
+    let patternPointer = null;
+    let patternSequence = [];
+    let patternPrevious = null;
+    let patternOverflow = false;
+    let patternTimeout = null;
+    let captureLossTimer = null;
+    let trailSegments = [];
+    let trailFrame = null;
+
+    function fadeTrail(now) {
+        trailSegments = trailSegments.filter(segment => {
+            const opacity = 1 - (now - segment.time) / 650;
+            if (opacity <= 0) {
+                segment.node.remove();
+                return false;
+            }
+            segment.node.setAttribute('opacity', opacity * 0.85);
+            return true;
+        });
+        trailFrame = trailSegments.length ? requestAnimationFrame(fadeTrail) : null;
+    }
+
+    function clearTrail() {
+        if (trailFrame !== null) cancelAnimationFrame(trailFrame);
+        trailFrame = null;
+        for (const segment of trailSegments) segment.node.remove();
+        trailSegments = [];
+    }
+
+    function cancelPattern() {
+        const capturedPointer = patternPointer;
+        patternPointer = null;
+        patternSequence = [];
+        patternPrevious = null;
+        patternOverflow = false;
+        if (patternTimeout !== null) clearTimeout(patternTimeout);
+        if (captureLossTimer !== null) clearTimeout(captureLossTimer);
+        patternTimeout = null;
+        captureLossTimer = null;
+        clearTrail();
+        if (capturedPointer !== null && patternPad.hasPointerCapture(capturedPointer)) {
+            patternPad.releasePointerCapture(capturedPointer);
+        }
+    }
+
+    function patternPosition(event) {
+        // SVG may be letterboxed in a wide or tall tile; use the actual SVG transform.
+        const matrix = patternPad.getScreenCTM();
+        if (!matrix) return null;
+        const point = patternPad.createSVGPoint();
+        point.x = event.clientX;
+        point.y = event.clientY;
+        return point.matrixTransform(matrix.inverse());
+    }
+
+    function appendPatternPoint(point) {
+        if (patternSequence[patternSequence.length - 1] === point.number) return;
+        if (patternSequence.length >= Number(tileState.MaximumPatternLength)) {
+            patternOverflow = true;
+            return;
+        }
+        patternSequence.push(point.number);
+    }
+
+    function samplePattern(position) {
+        if (!position) return;
+        if (patternPrevious === null) {
+            const point = points.find(p => Math.hypot(p.x - position.x, p.y - position.y) <= 30);
+            if (point) appendPatternPoint(point);
+        } else {
+            const dx = position.x - patternPrevious.x;
+            const dy = position.y - patternPrevious.y;
+            const a = dx * dx + dy * dy;
+            if (a > 0) {
+                const path = document.createElementNS(svgNS, 'path');
+                path.setAttribute('d', `M${patternPrevious.x},${patternPrevious.y}L${position.x},${position.y}`);
+                patternTrail.append(path);
+                trailSegments.push({node: path, time: performance.now()});
+                if (trailFrame === null) trailFrame = requestAnimationFrame(fadeTrail);
+                const hits = [];
+                for (const point of points) {
+                    const fx = patternPrevious.x - point.x;
+                    const fy = patternPrevious.y - point.y;
+                    const b = 2 * (fx * dx + fy * dy);
+                    const c = fx * fx + fy * fy - 30 * 30;
+                    const discriminant = b * b - 4 * a * c;
+                    if (discriminant < 0) continue;
+                    const t0 = (-b - Math.sqrt(discriminant)) / (2 * a);
+                    const t1 = (-b + Math.sqrt(discriminant)) / (2 * a);
+                    if (t1 >= 0 && t0 <= 1) hits.push({point, t: Math.max(0, t0)});
+                }
+                hits.sort((first, second) => first.t - second.t);
+                for (const hit of hits) appendPatternPoint(hit.point);
+            }
+        }
+        patternPrevious = position;
+    }
+
+    function refreshPatternTimeout() {
+        if (patternTimeout !== null) clearTimeout(patternTimeout);
+        patternTimeout = setTimeout(() => {
+            cancelPattern();
+            renderMessage();
+        }, Math.max(5, Number(tileState.InputTimeout)) * 1000);
+    }
+
+    patternPad.addEventListener('pointerdown', event => {
+        if (!isPatternMode() || tileState.Locked || patternPointer !== null ||
+            !event.isPrimary || (event.pointerType === 'mouse' && event.button !== 0)) return;
+        event.preventDefault();
+        cancelPattern();
+        patternPointer = event.pointerId;
+        patternPad.setPointerCapture(event.pointerId);
+        samplePattern(patternPosition(event));
+        refreshPatternTimeout();
+        document.getElementById('module-message').innerText = 'Pattern entry in progress';
+    });
+    patternPad.addEventListener('pointermove', event => {
+        if (event.pointerId !== patternPointer) return;
+        event.preventDefault();
+        const events = event.getCoalescedEvents ? event.getCoalescedEvents() : [];
+        for (const sample of events.length ? events : [event]) samplePattern(patternPosition(sample));
+        refreshPatternTimeout();
+    }, {passive: false});
+
+    function finishPattern(event, cancelled) {
+        if (patternPointer === null || event.pointerId !== patternPointer) return;
+        if (!cancelled) samplePattern(patternPosition(event));
+        // Retain no raw coordinates or point sequence after submission/cancellation.
+        const pattern = patternOverflow ? '0' : patternSequence.join('');
+        cancelPattern();
+        renderMessage();
+        if (cancelled || pattern === '' || tileState.Locked || !isPatternMode()) return;
+        requestAction('Pattern', JSON.stringify({Pattern: pattern, RequestID: beginClientRequest()}));
+    }
+    // Capture phase also receives pointerup if the pad has just lost pointer capture.
+    window.addEventListener('pointerup', event => finishPattern(event, false), true);
+    window.addEventListener('pointercancel', event => finishPattern(event, true), true);
+    patternPad.addEventListener('lostpointercapture', event => {
+        if (patternPointer === null || event.pointerId !== patternPointer) return;
+        if (captureLossTimer !== null) clearTimeout(captureLossTimer);
+        const pointer = event.pointerId;
+        // Some macOS browsers deliver this shortly BEFORE pointerup. Only a real
+        // pointerup can submit; loss of capture alone never confirms a gesture.
+        captureLossTimer = setTimeout(() => {
+            if (patternPointer === pointer) {
+                cancelPattern();
+                renderMessage();
+            }
+        }, 200);
+    });
+    for (const name of ['touchstart', 'touchmove', 'dragstart', 'selectstart']) {
+        patternPad.addEventListener(name, event => event.preventDefault(), {passive: false});
+    }
+    window.addEventListener('blur', () => { cancelPattern(); renderMessage(); });
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) { cancelPattern(); renderMessage(); }
+    });
     setInterval(updateCountdown, 250);
 </script>

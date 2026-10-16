@@ -1,10 +1,44 @@
 # Protected Action
 
-Protected Action executes an encrypted action only after a registered PIN has
+Protected Action executes an encrypted action only after a registered PIN or pattern has
 been entered. An action can contain either an imported Symcon script or a
 visualization target.
 
 This module is not a replacement for IP-Symcon access controls or a complete alarm system.
+
+## New in 1.1 Build 1: pattern input
+
+Select **Input mode → Pattern** in the instance configuration and apply before registering any actions. PIN remains the default. The first action **or Super PIN** registration freezes the input mode until `PRACT_Reset()`. Removing the last action does not release this lock. API changes cannot bypass it: an incompatible mode disables input and registration until the original mode is restored or all registrations are explicitly reset.
+
+Point numbering, from top left to bottom right:
+
+| Left | Middle | Right |
+| --- | --- | --- |
+| 1 | 2 | 3 |
+| 4 | 5 | 6 |
+| 7 | 8 | 9 |
+
+The existing registration API is unchanged. For a closed square:
+
+```php
+var_dump(PRACT_RegisterAction(12345, '13971', 67890, []));
+```
+
+The object may be a tested script or a visualization target; targets require an empty parameter array. Remove the code from the registration script afterwards.
+
+- Only digits `1`–`9`; no zero, stars, or consecutive repeated points. Returning to a previous point after other points is allowed (`131`).
+- Exact straight-line midpoints are inserted server-side for registration and verification: `13` becomes `123`, `19` becomes `159`, and `13971` becomes `123698741`. `16` and `15` have no midpoint. Midpoints are inserted even if previously visited; this differs from Android patterns.
+- Length settings count the **expanded sequence**: pattern range 2–16, default 4–16. The square therefore counts nine visits. Registrations with the same expanded sequence replace the same action.
+- Hold the left mouse button, touch, or pen and draw. Releasing submits the complete gesture; no Enter button is needed.
+- Fixed hit areas, exact point sequence, no tolerant recognition. Additional detected points invalidate the pattern.
+- No point highlighting or visible sequence. The movement trail fades over approximately 650 ms and is cleared on release.
+- Cancelled and empty gestures are not failed attempts. A completed wrong or overlong gesture counts once. Existing lockout rules apply.
+- Partial gestures stay local to the client. Only the completed sequence is submitted; the server's `InputActive` field therefore does not report a local gesture in progress. The configured input timeout cancels an inactive gesture.
+- Recovery always displays a numeric keypad. The Super PIN has separate length limits (default 4–16), independent of pattern limits. The existing scrambling option also applies to the recovery keypad.
+
+`PRACT_Unregister()` accepts the same pattern as registration. In pattern mode the existing `PRACT_InputDigit()` API accepts points `1`–`9`, rejects zero and consecutive repetitions, and `PRACT_Enter()` submits the sequence. Client-specific navigation still requires the built-in tile. There is no additional public registration method.
+
+**Updating:** PHP, tile code, and the encryption format change in this build. Reset and re-register all actions and the Super PIN. The planned update-resistant configuration is not included yet. PIN, pattern and recovery use distinct key-derivation domains.
 
 ## Important before updating
 
@@ -55,7 +89,8 @@ Pass any existing non-script object without parameters:
 var_dump(PRACT_RegisterAction(
     12345,      // Protected Action instance
     '654321',   // PIN
-    54321       // category or other visualization target
+    54321,      // category or other visualization target
+    []          // no parameters for targets
 ));
 ```
 
@@ -148,8 +183,10 @@ The example assumes that your control passes a single character in `$_IPS['VALUE
 | `RegisteredActions` | Number of stored actions. |
 | `FailedAttempts` | Failed regular PIN attempts. |
 | `RecoveryDefined` | Whether a Super PIN is registered. |
+| `InputMode` | `0` = PIN, `1` = pattern. |
+| `InputModeLocked` | Mode change requires reset. |
 
-The `Status` string variable (Ident `Status`) publishes the first seven fields above, but not the final three administrative fields. Use `PRACT_GetState()` when those additional fields are needed. For example:
+The `Status` string variable (Ident `Status`) publishes the first seven fields above, but not the final five administrative fields. Use `PRACT_GetState()` when those additional fields are needed. For example:
 
 ```php
 $state = json_decode(PRACT_GetState(12345), true, 512, JSON_THROW_ON_ERROR);
@@ -162,8 +199,11 @@ if ($state['Locked']) {
 
 | Option | Default | Meaning |
 | --- | ---: | --- |
-| Minimum PIN length | 4 | Minimum accepted PIN length. |
-| Maximum PIN length | 16 | Maximum accepted PIN length. |
+| Input mode | PIN (0) | PIN or pattern (1); frozen after first registration. |
+| Minimum access code length | 4 | Minimum 4 for PIN or 2 for patterns; counts expanded points. |
+| Maximum access code length | 16 | Maximum length, including mandatory pattern midpoints. |
+| Minimum Super PIN length | 4 | Independent numeric recovery limit. |
+| Maximum Super PIN length | 16 | Independent numeric recovery limit. |
 | Start delay after failed attempts | 3 | Failure threshold for temporary lockouts. |
 | Base delay | 20 s | Base lockout duration. |
 | Permanently lock after failed attempts | 5 | Failure threshold for permanent lockout. |
@@ -199,7 +239,7 @@ ends recovery without unlocking the instance.
 
 ## Tile layout
 
-The keypad is sized to the available visualization content area, not the tile header. No tile/content option is needed.
+The keypad or pattern pad is sized to the available visualization content area, not the tile header. No tile/content option is needed.
 
 ## Keypad and status
 

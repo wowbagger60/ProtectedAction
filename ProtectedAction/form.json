@@ -1,16 +1,56 @@
 {
     "elements": [
         {
+            "type": "Select",
+            "name": "InputMode",
+            "caption": "Input mode",
+            "options": [
+                {
+                    "caption": "PIN",
+                    "value": 0
+                },
+                {
+                    "caption": "Pattern",
+                    "value": 1
+                }
+            ],
+            "onChange": "IPS_RequestAction($id, \"InputModePreview\", $InputMode);"
+        },
+        {
+            "type": "Label",
+            "caption": "The input mode is locked after the first action or Super PIN registration. Changing it requires a reset."
+        },
+        {
+            "type": "Label",
+            "name": "ConfigurationError",
+            "caption": "",
+            "visible": false
+        },
+        {
             "type": "NumberSpinner",
             "name": "MinimumPINLength",
-            "caption": "Minimum PIN length",
+            "caption": "Minimum access code length",
             "minimum": 4,
             "maximum": 16
         },
         {
             "type": "NumberSpinner",
             "name": "MaximumPINLength",
-            "caption": "Maximum PIN length",
+            "caption": "Maximum access code length",
+            "minimum": 4,
+            "maximum": 16
+        },
+        {
+            "type": "NumberSpinner",
+            "name": "MinimumSuperPINLength",
+            "caption": "Minimum Super PIN length",
+            "minimum": 4,
+            "maximum": 16
+        },
+        {
+            "type": "NumberSpinner",
+            "name": "MaximumSuperPINLength",
+            "caption": "Maximum Super PIN length",
             "minimum": 4,
             "maximum": 16
         },
@@ -77,6 +117,18 @@
         {
             "type": "Label",
             "caption": "Actions are imported from tested scripts or registered as visualization targets through PRACT_RegisterAction()."
+        }
+    ],
+    "status": [
+        {
+            "code": 202,
+            "icon": "error",
+            "caption": "Invalid configuration or locked input mode"
+        },
+        {
+            "code": 201,
+            "icon": "error",
+            "caption": "Sodium extension is not available"
         }
     ]
 }

@@ -19,7 +19,7 @@
         {
             "code": 202,
             "icon": "error",
-            "caption": "Invalid PIN length configuration"
+            "caption": "Invalid configuration or locked input mode"
         }
     ],
     "url": "https://www.cassanisautomation.fr"
