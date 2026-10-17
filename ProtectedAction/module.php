@@ -386,6 +386,28 @@ class ProtectedAction extends IPSModuleStrict
         return $this->ProcessEntry($requestID);
     }
 
+    public function Unlock(string $SuperPIN): bool
+    {
+        if (!$this->CryptoAvailable() || $this->ConfigurationError() !== '' ||
+            !$this->ReadAttributeBoolean('PermanentlyLocked') ||
+            $this->ReadAttributeString('Recovery') === '') {
+            return false;
+        }
+        // Do not call BeginRecovery(): it explicitly starts a new attempt budget.
+        // API calls share the current budget with the interactive recovery flow.
+        if ($this->ReadAttributeInteger('RecoveryFailedAttempts') >=
+            $this->ReadPropertyInteger('RecoveryAttempts')) {
+            sodium_memzero($SuperPIN);
+            return false;
+        }
+        $this->ClearInput();
+        if (!$this->ValidPIN($SuperPIN)) {
+            sodium_memzero($SuperPIN);
+            return $this->TryRecovery('');
+        }
+        return $this->TryRecovery($SuperPIN);
+    }
+
     public function BeginRecovery(): bool
     {
         if (!$this->ReadAttributeBoolean('PermanentlyLocked') || $this->ReadAttributeString('Recovery') === '') {
@@ -403,7 +425,6 @@ class ProtectedAction extends IPSModuleStrict
     public function CancelRecovery(): void
     {
         $this->WriteAttributeBoolean('RecoveryMode', false);
-        $this->WriteAttributeInteger('RecoveryFailedAttempts', 0);
         $this->ClearInput();
         $this->ClearTransientMessage();
         $this->UpdateSummary();

@@ -159,6 +159,7 @@ All calls use the Protected Action instance ID as their first argument. The `PRA
 | `PRACT_RegisterAction` | `string $PIN, int $ObjectID, array $Parameters = []` | `bool` | Encrypt a copy of a script and its parameters, or register a non-script object as a visualization target. Reusing a PIN replaces the action. |
 | `PRACT_Unregister` | `string $PIN` | `bool` | Remove the action assigned to a PIN; `false` if not found or invalid. |
 | `PRACT_RegisterSuperPIN` | `string $PIN` | `bool` | Register or replace the recovery PIN. |
+| `PRACT_Unlock` | `string $SuperPIN` | `bool` | Unlock directly with the Super PIN, without BeginRecovery. Shares the existing recovery attempt budget. |
 | `PRACT_InputDigit` | `int $Digit` | `bool` | Append one digit (`0`–`9`); `false` when input is locked, invalid, or full. |
 | `PRACT_Clear` | none | `void` | Clear the current PIN entry and temporary message. |
 | `PRACT_Enter` | none | `bool` | Submit the entered PIN. `true` on successful script execution or recovery; navigation targets require the built-in visualization tile. |
@@ -259,6 +260,18 @@ PRACT_BeginRecovery(12345);
 After `BeginRecovery()`, enter the Super PIN through the keypad and press Enter.
 A successful recovery resets the failure counters. `PRACT_CancelRecovery()`
 ends recovery without unlocking the instance.
+
+Alternatively, unlock directly through the API, without calling `PRACT_BeginRecovery()` first:
+
+```php
+$success = PRACT_Unlock(12345, '1234567890');
+```
+
+`Unlock()` returns `true` only on successful recovery. It requires permanent lockout, a registered Super PIN and valid instance configuration. Calling it on an instance that is not permanently locked returns `false` without consuming an attempt.
+
+Wrong or malformed Super PINs count against the shared recovery attempt budget. Repeated API calls never replenish it. Once exhausted, even a correct Super PIN is rejected until the administrator explicitly starts a new round with `PRACT_BeginRecovery()`. `PRACT_CancelRecovery()` leaves interactive mode but preserves recovery failures. API unlock alone does not switch the tile into recovery mode.
+
+Do not retain the Super PIN in a publicly accessible script or log it. Build 4 keeps Build 3's encryption format: existing update-independent registrations remain usable; code-bound registrations require reset and re-registration because the PHP code changes.
 
 ## Tile layout
 

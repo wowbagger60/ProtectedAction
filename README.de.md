@@ -106,6 +106,18 @@ PRACT_BeginRecovery(12345);
 
 Den Super-PIN anschliessend über das Tastenfeld eingeben. Eine erfolgreiche Wiederherstellung setzt die Fehlversuchszähler zurück. Mit `PRACT_CancelRecovery()` wird der Vorgang abgebrochen.
 
+Alternativ direkt per API entsperren, ohne vorheriges `PRACT_BeginRecovery()`:
+
+```php
+$Erfolg = PRACT_Unlock(12345, '1234567890');
+```
+
+`Unlock()` liefert `true` nur bei erfolgreicher Entsperrung. Voraussetzung sind eine permanente Sperre, ein registrierter Super-PIN und eine gültige Instanzkonfiguration. Ist die Instanz nicht dauerhaft gesperrt, liefert der Aufruf `false`, ohne einen Fehlversuch zu zählen.
+
+Falsche oder ungültig formatierte Super-PINs zählen gegen das gemeinsame Recovery-Limit. Wiederholte API-Aufrufe starten dieses Limit nicht neu. Nach Ausschöpfen des Limits bleibt auch ein korrekter Super-PIN per API blockiert, bis der Administrator ausdrücklich mit `PRACT_BeginRecovery()` eine neue Recovery-Runde startet. `PRACT_CancelRecovery()` beendet die interaktive Eingabe, behält aber bisherige Recovery-Fehlversuche bei. Ein API-Aufruf allein schaltet die Kachel nicht in den Recovery-Modus.
+
+Den Super-PIN nicht dauerhaft in einem frei zugänglichen Script belassen und nicht protokollieren. Build 4 verwendet dasselbe Verschlüsselungsformat wie Build 3: Ohne Codebindung bleiben bestehende Registrierungen erhalten. Mit Codebindung erfordert die PHP-Änderung wie vorgesehen Reset und Neuregistrierung.
+
 ## Kachel und Status
 
 Das PIN-Tastenfeld beziehungsweise Musterfeld verwendet immer den verfügbaren **Content-Bereich** der Kachel. Eine zusätzliche Konfigurationsoption gibt es nicht.
@@ -132,6 +144,7 @@ Alle Aufrufe erwarten als erstes Argument die Instanz-ID von Protected Action. D
 | `PRACT_RegisterAction` | `string $PIN, int $ObjectID, array $Parameters = []` | `bool` | Scriptinhalt samt Parametern verschlüsselt importieren oder ein anderes Objekt als Visualisierungsziel registrieren. Eine bestehende PIN wird überschrieben. |
 | `PRACT_Unregister` | `string $PIN` | `bool` | Aktion dieser PIN entfernen; `false`, falls nicht vorhanden oder ungültig. |
 | `PRACT_RegisterSuperPIN` | `string $PIN` | `bool` | Super-PIN für die Wiederherstellung registrieren oder ersetzen. |
+| `PRACT_Unlock` | `string $SuperPIN` | `bool` | Direkt mit Super-PIN entsperren; kein vorheriges BeginRecovery erforderlich. Verwendet das bestehende Recovery-Versuchslimit. |
 | `PRACT_InputDigit` | `int $Digit` | `bool` | Ziffer (`0`–`9`) anhängen; `false` bei Sperre, ungültiger Ziffer oder vollem Eingabepuffer. |
 | `PRACT_Clear` | keine | `void` | PIN-Eingabe und temporäre Meldung löschen. |
 | `PRACT_Enter` | keine | `bool` | PIN bestätigen. `true` bei erfolgreich ausgeführter Script-Aktion oder Entsperrung; Navigation erfordert die eingebaute Kachel. |
