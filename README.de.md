@@ -1,37 +1,45 @@
-# Protected Action
+# ProtectedAction
 
-Protected Action führt eine verschlüsselt hinterlegte Aktion erst nach Eingabe des zugehörigen PINs oder Musters aus. Möglich sind importierte Symcon-Scripte und Visualisierungsziele.
+ProtectedAction führt hinterlegte Aktionen nach Eingabe einer PIN oder eines Musters aus. Es kann Symcon-Scripte ausführen oder zu einem Ziel in der Visualisierung navigieren. Die hinterlegten Aktionen werden verschlüsselt gespeichert. Ein Anwendungsfall ist die geschützte Freigabe des Bearbeitungsmodus.
 
-## Einrichtung und Versionsbindung
+## Einrichtung
 
-1. Eingabemodus **PIN** oder **Muster** wählen.
-2. **Bei Änderungen am Modulcode Neuregistrierung verlangen** einstellen. Die Option ist standardmässig **eingeschaltet**.
-3. Konfiguration übernehmen, danach Aktionen und Super-PIN registrieren.
+### 1. Instanz konfigurieren
 
-| Codebindung | Verhalten bei Moduländerungen |
-| --- | --- |
-| Eingeschaltet (Standard) | PHP- und Kachelcode fliessen in die Schlüsselableitung ein. Eine Änderung macht bisherige Registrierungen unbrauchbar. Reset und Neuregistrierung sind erforderlich. |
-| Ausgeschaltet | Die verschlüsselten Aktionen und der Super-PIN bleiben bei kompatiblen Updates erhalten. Der Modulcode geht nicht in die Schlüsselableitung ein. |
+ProtectedAction aus dem Module Store installieren und eine Instanz anlegen. Vor dem Registrieren der ersten Aktion zwei Einstellungen wählen und übernehmen:
 
-**Eingabemodus und Codebindung sind nach der ersten Aktion oder Super-PIN-Registrierung gesperrt.** Auch nach dem Entfernen der letzten Aktion bleibt diese Sperre bestehen. Beide Optionen lassen sich erst nach einem ausdrücklichen Reset ändern:
+- **Eingabemodus:** PIN für das Zahlenpad oder Muster für die Zeichenfläche. Eine Instanz verwendet einen dieser beiden Modi. Für mehrere Aktionen lassen sich verschiedene PINs beziehungsweise Muster hinterlegen.
+- **Codebindung:** Die Option **Bei Änderungen am Modulcode Neuregistrierung verlangen** ist standardmässig eingeschaltet. Sie bietet zusätzlichen Schutz: Wird der Modulcode geändert, können die bisherigen Aktionen und der Super-PIN nicht mehr entschlüsselt werden. Nach einem Modulupdate mit solchen Änderungen müssen sie deshalb zurückgesetzt und neu registriert werden. Ohne Codebindung bleiben sie bei kompatiblen Modulupdates erhalten. Ein Update von Symcon selbst ist damit nicht gemeint.
+
+**Nach der ersten Aktion oder Super-PIN-Registrierung sind beide Einstellungen gesperrt.** Zum Ändern die Instanz mit `PRACT_Reset()` zurücksetzen, die neuen Einstellungen übernehmen und alle Aktionen sowie den Super-PIN neu registrieren. Reset löscht die vorhandenen Registrierungen.
+
+### 2. Aktionsscript erstellen
+
+In Symcon ein Script mit der gewünschten Aktion erstellen und testen. Beispielsweise kann es den Bearbeitungsmodus der Visualisierung umschalten oder eine Beleuchtung einschalten.
+
+Anschliessend dieses Script über ein separates Registrierungsscript einer PIN oder einem Muster zuordnen. In den folgenden Beispielen ist `12345` die ProtectedAction-Instanz und `67890` das zuvor getestete Aktionsscript. Die IDs durch die eigenen Werte ersetzen.
+
+#### Aktion mit PIN registrieren
+
+Wenn die Instanz auf **PIN** eingestellt ist:
 
 ```php
-PRACT_Reset(12345);
+var_dump(PRACT_RegisterAction(12345, '482619', 67890, []));
 ```
 
-Reset löscht alle Aktionen, den Super-PIN, Sperren und Zähler. Danach die gewünschten Optionen wählen, übernehmen und neu registrieren. Änderungen gesperrter Optionen per API werden ebenfalls geprüft und blockieren Eingabe sowie Registrierung. Um die vorhandenen Daten weiterzuverwenden, die ursprüngliche Einstellung wiederherstellen.
+Eine PIN muss 4 bis 16 Ziffern lang sein.
 
-Ohne Codebindung bleiben die Aktionen authentifiziert verschlüsselt; der Schutz vor Modulcodeänderungen entfällt jedoch bewusst. Dies ist eine Komfortentscheidung, beispielsweise zum Freigeben des Bearbeitungsmodus. Die Updatebeständigkeit setzt unveränderte oder ausdrücklich kompatibel unterstützte Datenformate und Schlüsselableitung voraus; sie ist keine Garantie für beliebige zukünftige Formatwechsel.
+Nach Eingabe der PIN `482619` wird die Aktion ausgeführt. `true` bestätigt die erfolgreiche Registrierung; bei `false` die Einstellungen, den Zugangscode und die Script-ID prüfen.
 
-### Umstieg auf 1.1 Build 3
+#### Aktion mit Muster registrieren
 
-Dieser Build entfernt die vier Längenoptionen und führt die optionale Codebindung mit einem neuen Verschlüsselungsformat ein. **Vorhandene Registrierungen aus früheren Builds müssen einmal zurückgesetzt und neu registriert werden.** Es gibt keine automatische Entschlüsselung oder Umwandlung. Vorhandene Registrierungen werden nicht nachträglich als updatefest behandelt.
+Wenn die Instanz auf **Muster** eingestellt ist, dieselbe Methode verwenden und die besuchten Punkte als Zeichenfolge angeben:
 
-Wer künftige kompatible Updates ohne Neuregistrierung nutzen möchte, schaltet die Codebindung **nach dem Reset und vor der ersten Registrierung** aus. Der Schalter ist weder eine nachträgliche Migration noch ein Weg, bestehende gebundene Daten freizugeben.
+```php
+var_dump(PRACT_RegisterAction(12345, '13971', 67890, []));
+```
 
-## Mustereingabe
-
-Die Punktnummerierung läuft zeilenweise von links oben nach rechts unten:
+Die Punkte sind von links oben nach rechts unten nummeriert:
 
 | Links | Mitte | Rechts |
 | --- | --- | --- |
@@ -39,189 +47,168 @@ Die Punktnummerierung läuft zeilenweise von links oben nach rechts unten:
 | 4 | 5 | 6 |
 | 7 | 8 | 9 |
 
-Im Mustermodus bleibt die Registrierungs-API unverändert. Beispiel für ein geschlossenes Quadrat:
+`13971` beschreibt ein geschlossenes Quadrat. Falls eine gerade Verbindung über weitere Punkte führt, ergänzt ProtectedAction diese automatisch. So wird bei `13` auch die `2` berücksichtigt. Ein Punkt darf später erneut besucht werden, aber nicht zweimal direkt hintereinander. Die `0` ist im Muster nicht zulässig.
+
+Ein Muster besteht aus 2 bis 16 Punktbesuchen, einschliesslich automatisch ergänzter Zwischenpunkte.
+
+#### Was wird gespeichert?
+
+Bei der Registrierung kopiert ProtectedAction den vollständigen Inhalt des Aktionsscripts und speichert ihn verschlüsselt. Das ursprüngliche Script wird danach nicht mehr benötigt und kann nach einem erfolgreichen Test gelöscht werden, wenn sein Inhalt nicht offen im System verbleiben soll. ProtectedAction löscht es nicht automatisch.
+
+Spätere Änderungen am ursprünglichen Script wirken sich nicht auf die registrierte Aktion aus. Zum Übernehmen einer Änderung die Aktion erneut registrieren. Derselbe Zugangscode ersetzt die bisherige Aktion.
+
+Das letzte Argument `[]` ist für Scriptparameter vorgesehen. Falls das Script Parameter benötigt, dort ein Array übergeben; die Werte stehen im ausgeführten Script über `$_IPS` zur Verfügung. Ohne Parameter immer `[]` angeben.
+
+**PIN beziehungsweise Muster und vertrauliche Parameter nach dem Test auch aus dem Registrierungsscript entfernen.**
+
+### 3. Alternativ ein Navigationsziel registrieren
+
+Statt einer Script-ID die Objekt-ID des gewünschten Visualisierungsziels übergeben, beispielsweise eine Kategorie:
 
 ```php
-var_dump(PRACT_RegisterAction(12345, '13971', 67890, []));
+var_dump(PRACT_RegisterAction(12345, '739184', 54321, []));
 ```
 
-`67890` kann ein getestetes Script oder ein Visualisierungsziel sein. Für ein Ziel muss das Parameterarray leer sein. Den Zugangscode anschliessend aus dem Registrierungsscript entfernen.
+Dieses Beispiel verwendet die PIN `739184`. Im Mustermodus stattdessen eine gültige Punktfolge wie `'159'` verwenden. `54321` ist die Ziel-ID. Das Parameterarray bleibt bei Navigationszielen leer.
 
-- Nur Punkte `1` bis `9`, keine `0`, Sterne oder direkt aufeinanderfolgenden Wiederholungen.
-- Ein Punkt darf nach anderen Punkten erneut besucht werden, etwa `131`.
-- Gerade Zwischenpunkte werden bei Registrierung und Prüfung serverseitig ergänzt: `13` wird `123`, `19` wird `159`, `13971` wird `123698741`. Für `16` und `15` wird nichts ergänzt. Die Ergänzung erfolgt auch bei zuvor besuchten Zwischenpunkten; dies unterscheidet sich vom Android-Muster.
-- Unterschiedlich geschriebene, aber identisch ergänzte Muster bezeichnen dieselbe Aktion.
-- Maus: linke Taste gedrückt halten und zeichnen. Touch/Stift: aufsetzen und zeichnen. Loslassen prüft die vollständige Geste ohne E-Taste.
-- Quadratische Zeichenfläche, feste Trefferflächen, keine tolerante Erkennung. Zusätzliche erfasste Punkte machen die Eingabe ungültig.
-- Keine Hervorhebung erkannter Punkte und keine sichtbare Punktfolge. Die Bewegungsspur verblasst nach etwa 650 ms und verschwindet beim Loslassen vollständig.
-- Abgebrochene oder leere Gesten zählen nicht als Fehlversuch. Ein abgeschlossenes falsches oder zu langes Muster zählt genau einmal.
-- Die Musterfolge bleibt während des Zeichnens lokal und wird erst beim Loslassen vollständig übermittelt. `InputActive` im Server-Status erfasst deshalb keine laufende lokale Zeichengeste. Inaktivität über das konfigurierte Eingabe-Timeout verwirft die Geste.
-- Recovery verwendet immer das Zahlenpad und den numerischen Super-PIN. Die bestehende Scrambling-Einstellung gilt auch für das Recovery-Zahlenpad.
+ProtectedAction erkennt anhand des Objekts, ob es ein Script oder ein Navigationsziel ist. Nach korrekter Eingabe öffnet sich das Ziel nur auf dem Client, auf dem der Zugangscode eingegeben wurde.
 
-`PRACT_Unregister()` akzeptiert dieselbe Musterfolge wie `RegisterAction()`. Über `PRACT_InputDigit()` können im Mustermodus Punkte `1`–`9` eingegeben und mit `PRACT_Enter()` bestätigt werden; `0` und direkte Wiederholungen werden abgelehnt. Clientlokale Navigation bleibt auf die eingebaute Kachel beschränkt. PIN, Muster und Recovery werden bei der Schlüsselableitung getrennt behandelt.
+Ein Navigationsziel darf auch ausgeblendet (hidden) sein. Es ist also möglich, zu Kategorien zu navigieren, die normalerweise in der Visualisierung nicht sichtbar sind.
 
-## Feste Zugangscode-Längen
+### 4. Super-PIN einrichten
 
-| Zugang | Minimum | Maximum |
-| --- | ---: | ---: |
-| PIN | 4 Ziffern | 16 Ziffern |
-| Muster | 2 Punktbesuche | 16 Punktbesuche |
-| Super-PIN | 4 Ziffern | 16 Ziffern |
-
-Beim Muster zählt die **ergänzte Punktfolge** einschliesslich gerader Zwischenpunkte. Das Quadrat `13971` zählt daher neun Punktbesuche. Die früheren vier Längeneinstellungen sind entfernt; die Grenzen werden serverseitig und für den Eingabepuffer durchgesetzt. Für den Super-PIN einen ausreichend langen, eigenständigen Code wählen.
-
-## Script-Aktion registrieren
-
-Zuerst ein Symcon-Script erstellen und testen. Dann dessen Inhalt und die Parameter verschlüsselt importieren:
+Zum späteren Entsperren einen eigenen Super-PIN registrieren:
 
 ```php
-PRACT_RegisterAction(12345, '123456', 67890, [
-    'OBJECT_ID' => 54321,
-    'HIDDEN' => false
-]);
+var_dump(PRACT_RegisterSuperPIN(12345, '8073519264'));
 ```
 
-Das Quellscript wird beim Registrieren kopiert; spätere Änderungen wirken sich nicht aus. Nach dem Test das Quellscript sowie PIN und Parameter aus dem Registrierungsscript entfernen.
+Der Super-PIN ist immer numerisch, auch im Mustermodus. Einen ausreichend langen, separaten Code wählen und sicher aufbewahren. Anschliessend auch ihn aus dem Registrierungsscript entfernen. Die Registrierung allein startet noch keine Wiederherstellung.
 
-## Visualisierungsziel registrieren
+Der Super-PIN muss 4 bis 16 Ziffern lang sein.
+
+## Funktion
+
+Die ProtectedAction-Instanz in der Visualisierung als Kachel verwenden. Je nach Eingabemodus erscheint ein Zahlenpad oder eine quadratische Zeichenfläche.
+
+### Eingabe und Ausführung
+
+- **PIN:** Ziffern antippen oder anklicken. **C** löscht die bisherige Eingabe, **E** schickt sie ab. Auf Wunsch werden die Ziffernpositionen gemischt.
+- **Muster:** Finger oder Stift aufsetzen beziehungsweise die linke Maustaste gedrückt halten und die Punkte in der registrierten Reihenfolge abfahren. Abheben oder Loslassen schickt das Muster ab. Eine verblassende Spur unterstützt die Orientierung.
+
+Bei einem passenden Zugangscode entschlüsselt ProtectedAction die hinterlegte Aktion. Der gespeicherte Scriptinhalt wird ausgeführt oder das registrierte Navigationsziel geöffnet. Die Kachel zeigt das Ergebnis an.
+
+Eine unvollständige Eingabe wird nach dem konfigurierten Eingabe-Timeout verworfen. Eine abgebrochene Zeichengeste zählt nicht als Fehlversuch.
+
+### Fehlversuche und Entsperren
+
+Falsche Zugangscodes zählen als Fehlversuche. Zunächst wird die Eingabe vorübergehend gesperrt. Nach der konfigurierten Anzahl aufeinanderfolgender Fehlversuche bleibt ProtectedAction dauerhaft gesperrt. Eine erfolgreiche reguläre Eingabe setzt den Fehlversuchszähler zurück.
+
+Zum Entsperren aus einem Script den Super-PIN übergeben:
 
 ```php
-PRACT_RegisterAction(12345, '654321', 54321, []);
+var_dump(PRACT_Unlock(12345, '8073519264'));
 ```
 
-Bei einem Objekt, das kein Script ist, wird die Objekt-ID als Visualisierungsziel verschlüsselt gespeichert. Nach korrekter PIN-Eingabe in der Kachel öffnet sich das Ziel nur auf dem betreffenden Visualisierungsclient. Ein Aufruf über `PRACT_Enter()` aus PHP kann nicht navigieren, weil dort kein Client zugeordnet ist (`VISUALIZATION_REQUIRED`). Ein ausgeblendetes Objekt ist kein Ersatz für Zugriffskontrolle.
+Ein vorheriges `PRACT_BeginRecovery()` ist dafür nicht nötig. Bei korrektem Super-PIN wird die Instanz entsperrt und die Fehlversuchszähler werden zurückgesetzt. Auch falsche Super-PINs sind auf eine konfigurierbare Anzahl Versuche begrenzt. Die interaktive Wiederherstellung über das Zahlenpad ist im API-Abschnitt beschrieben.
 
-Eine erneute Registrierung derselben PIN ersetzt die bisherige Aktion. Zum Entfernen:
+### Weitere Einstellungen
 
-```php
-PRACT_Unregister(12345, '123456');
-```
+| Einstellung | Standard | Wirkung |
+| --- | --- | --- |
+| Verzögerung nach Fehlversuchen | 3 | Ab diesem Fehlversuch vorübergehend sperren. |
+| Basisverzögerung | 20 Sekunden | Beim ersten verzögerten Versuch 20 Sekunden sperren, beim nächsten 40 Sekunden usw. |
+| Permanente Sperre nach Fehlversuchen | 5 | Ab diesem Fehlversuch dauerhaft sperren. |
+| Eingabe-Timeout | 20 Sekunden | Unvollständige Eingabe nach Inaktivität verwerfen. |
+| Wiederherstellungsversuche | 3 | Erlaubte falsche Super-PIN-Eingaben pro Recovery-Runde. |
+| Anzeigedauer temporärer Meldungen | 3 Sekunden | Wie lange eine Rückmeldung sichtbar bleibt. |
+| Ziffern mischen | Aus | Ziffernpositionen im Zahlenpad mischen, auch bei interaktiver Recovery. |
+| Mischintervall bei Inaktivität | 0 Sekunden | Zahlenpad regelmässig neu mischen; `0` deaktiviert das Intervall. |
 
-## Super-PIN und Wiederherstellung
+### Schutzumfang
 
-```php
-PRACT_RegisterSuperPIN(12345, '1234567890');
-PRACT_BeginRecovery(12345);
-```
+ProtectedAction schützt die hinterlegten Aktionen durch Verschlüsselung, Fehlversuchssperren und optional die Codebindung. Es ist als Komfortschutz gedacht und ersetzt nicht die Zugriffskontrolle von Symcon. Wer das Symcon-System administrieren kann, kann auch die Eingabe verändern. Andere Objekte und Dateien im System werden durch das Modul nicht geschützt. Insbesondere bleibt ein ursprüngliches Aktionsscript lesbar, solange es nicht gelöscht wurde.
 
-Den Super-PIN anschliessend über das Tastenfeld eingeben. Eine erfolgreiche Wiederherstellung setzt die Fehlversuchszähler zurück. Mit `PRACT_CancelRecovery()` wird der Vorgang abgebrochen.
+## API
 
-Alternativ direkt per API entsperren, ohne vorheriges `PRACT_BeginRecovery()`:
+Alle Aufrufe erwarten als erstes Argument die Instanz-ID von ProtectedAction. PINs und Muster immer als **String** übergeben, damit führende Nullen erhalten bleiben. Die folgenden Tabellen nennen nur die weiteren Parameter.
 
-```php
-$Erfolg = PRACT_Unlock(12345, '1234567890');
-```
+### Aktionen und Super-PIN verwalten
 
-`Unlock()` liefert `true` nur bei erfolgreicher Entsperrung. Voraussetzung sind eine permanente Sperre, ein registrierter Super-PIN und eine gültige Instanzkonfiguration. Ist die Instanz nicht dauerhaft gesperrt, liefert der Aufruf `false`, ohne einen Fehlversuch zu zählen.
-
-Falsche oder ungültig formatierte Super-PINs zählen gegen das gemeinsame Recovery-Limit. Wiederholte API-Aufrufe starten dieses Limit nicht neu. Nach Ausschöpfen des Limits bleibt auch ein korrekter Super-PIN per API blockiert, bis der Administrator ausdrücklich mit `PRACT_BeginRecovery()` eine neue Recovery-Runde startet. `PRACT_CancelRecovery()` beendet die interaktive Eingabe, behält aber bisherige Recovery-Fehlversuche bei. Ein API-Aufruf allein schaltet die Kachel nicht in den Recovery-Modus.
-
-Den Super-PIN nicht dauerhaft in einem frei zugänglichen Script belassen und nicht protokollieren. Build 4 verwendet dasselbe Verschlüsselungsformat wie Build 3: Ohne Codebindung bleiben bestehende Registrierungen erhalten. Mit Codebindung erfordert die PHP-Änderung wie vorgesehen Reset und Neuregistrierung.
-
-## Kachel und Status
-
-Das PIN-Tastenfeld beziehungsweise Musterfeld verwendet immer den verfügbaren **Content-Bereich** der Kachel. Eine zusätzliche Konfigurationsoption gibt es nicht.
-
-Ein eigenes Tastenfeld kann diese API verwenden:
-
-```php
-PRACT_InputDigit(12345, 7);
-PRACT_Clear(12345);
-PRACT_Enter(12345);
-```
-
-Die String-Variable `Status` liefert JSON mit maschinenlesbaren Codes: `READY`, `INPUT_ACTIVE`, `PIN_INVALID`, `ACTION_EXECUTED`, `ACTION_FAILED`, `VISUALIZATION_REQUIRED`, `TEMPORARILY_LOCKED`, `PERMANENTLY_LOCKED`, `RECOVERY_ACTIVE`, `SUPER_PIN_INVALID`, `UNLOCKED`.
-
-Die Statusvariable enthält weder PIN noch Scripttext, Parameter oder Ziel-ID. Zustandsabhängige Aktionen (Toggle) müssen im importierten Script implementiert werden.
-
-
-## Referenz der öffentlichen Methoden
-
-Alle Aufrufe erwarten als erstes Argument die Instanz-ID von Protected Action. Die `PRACT_`-Funktionen sind die von IP-Symcon bereitgestellten Modulaufrufe. PINs immer als **String** übergeben, damit führende Nullen erhalten bleiben.
-
-| Funktion | Parameter nach der Instanz-ID | Rückgabe | Beschreibung |
+| Methode | Weitere Parameter | Rückgabe | Beschreibung |
 | --- | --- | --- | --- |
-| `PRACT_RegisterAction` | `string $PIN, int $ObjectID, array $Parameters = []` | `bool` | Scriptinhalt samt Parametern verschlüsselt importieren oder ein anderes Objekt als Visualisierungsziel registrieren. Eine bestehende PIN wird überschrieben. |
-| `PRACT_Unregister` | `string $PIN` | `bool` | Aktion dieser PIN entfernen; `false`, falls nicht vorhanden oder ungültig. |
-| `PRACT_RegisterSuperPIN` | `string $PIN` | `bool` | Super-PIN für die Wiederherstellung registrieren oder ersetzen. |
-| `PRACT_Unlock` | `string $SuperPIN` | `bool` | Direkt mit Super-PIN entsperren; kein vorheriges BeginRecovery erforderlich. Verwendet das bestehende Recovery-Versuchslimit. |
-| `PRACT_InputDigit` | `int $Digit` | `bool` | Ziffer (`0`–`9`) anhängen; `false` bei Sperre, ungültiger Ziffer oder vollem Eingabepuffer. |
-| `PRACT_Clear` | keine | `void` | PIN-Eingabe und temporäre Meldung löschen. |
-| `PRACT_Enter` | keine | `bool` | PIN bestätigen. `true` bei erfolgreich ausgeführter Script-Aktion oder Entsperrung; Navigation erfordert die eingebaute Kachel. |
-| `PRACT_BeginRecovery` | keine | `bool` | Super-PIN-Eingabe starten; nur bei permanenter Sperre und registriertem Super-PIN. |
-| `PRACT_CancelRecovery` | keine | `void` | Wiederherstellung abbrechen, ohne zu entsperren. |
-| `PRACT_Reset` | keine | `void` | **Alle Aktionen und den Super-PIN unwiderruflich löschen**, Sperren und Zähler zurücksetzen. |
-| `PRACT_GetState` | keine | `string` | JSON mit aktuellem Status, Anzahl Aktionen und Fehlversuchen liefern. |
+| `PRACT_RegisterAction` | `string $PIN, int $ObjectID, array $Parameters` | `bool` | Aktionsscript samt Parametern importieren oder ein Navigationsziel registrieren. `$PIN` enthält je nach Instanzmodus die PIN oder das Muster. Für unbenutzte Parameter `[]` übergeben. Derselbe Zugangscode ersetzt die bisherige Aktion. |
+| `PRACT_Unregister` | `string $PIN` | `bool` | Aktion der PIN beziehungsweise des Musters entfernen. `false`, wenn der Code ungültig oder nicht registriert ist. |
+| `PRACT_RegisterSuperPIN` | `string $PIN` | `bool` | Numerischen Super-PIN registrieren oder ersetzen. |
+| `PRACT_Reset` | Keine | `void` | Alle Aktionen und den Super-PIN löschen, Sperren und Zähler zurücksetzen sowie Eingabemodus und Codebindung zur Änderung freigeben. |
 
-`PRACT_InternalTimer()` ist ein technischer Timer-Callback und **keine Anwenderschnittstelle**. `RequestAction()` und `GetVisualizationTile()` werden von Symcon intern für die Kachel verwendet.
+### Entsperren und interaktive Recovery
 
-### Eigenes PIN-Tastenfeld bauen
+| Methode | Weitere Parameter | Rückgabe | Beschreibung |
+| --- | --- | --- | --- |
+| `PRACT_Unlock` | `string $SuperPIN` | `bool` | Dauerhaft gesperrte Instanz direkt entsperren. Kein vorheriges `BeginRecovery()` nötig. `true` nur bei erfolgreicher Entsperrung. |
+| `PRACT_BeginRecovery` | Keine | `bool` | Neue Recovery-Runde starten und das Zahlenpad für den Super-PIN freigeben. Nur bei permanenter Sperre und registriertem Super-PIN möglich. |
+| `PRACT_CancelRecovery` | Keine | `void` | Interaktive Recovery beenden, ohne zu entsperren. Bisherige Recovery-Fehlversuche bleiben erhalten. |
 
-Statt der eingebauten Kachel können eigene Schaltflächen in einer Visualisierung oder externe Tasten verwendet werden. Jede Ziffer ruft `PRACT_InputDigit()` auf, die Löschtaste `PRACT_Clear()` und die Bestätigungstaste `PRACT_Enter()`:
+Für die interaktive Wiederherstellung `PRACT_BeginRecovery(12345)` aufrufen, danach den Super-PIN im Zahlenpad eingeben und mit **E** bestätigen.
 
-```php
-// Script für eigene Bedienelemente; Herkunft von $Taste anpassen.
-$InstanzID = 12345;
-$Taste = (string) $_IPS['VALUE']; // Beispiel: '0'..'9', 'C', 'E'
+`Unlock()` und die interaktive Eingabe verwenden denselben Recovery-Zähler. Ist die Zahl der Wiederherstellungsversuche ausgeschöpft, wird auch ein korrekter Super-PIN abgelehnt. Der Administrator kann mit `PRACT_BeginRecovery()` ausdrücklich eine neue Recovery-Runde starten. Wiederholte `Unlock()`-Aufrufe setzen den Zähler nicht zurück.
 
-if (preg_match('/^[0-9]$/', $Taste) === 1) {
-    PRACT_InputDigit($InstanzID, (int) $Taste);
-} elseif ($Taste === 'C') {
-    PRACT_Clear($InstanzID);
-} elseif ($Taste === 'E') {
-    PRACT_Enter($InstanzID);
-}
-```
+Ist die Instanz nicht dauerhaft gesperrt oder kein Super-PIN registriert, liefert `Unlock()` `false`, ohne einen Versuch zu zählen.
 
-Das Beispiel setzt voraus, dass das eigene Bedienelement ein Zeichen in `$_IPS['VALUE']` übergibt. Bei anderen Visualisierungen oder Ereignissen muss die Herkunft angepasst werden. Die PIN **nicht** in einer Klartext-Variable zusammensetzen oder protokollieren. Protected Action sammelt die Ziffern intern, löscht die Eingabe nach der Bestätigung und berücksichtigt Eingabe-Timeout sowie Sperrregeln. Eine eigene PIN-Prüfung ist nicht erforderlich.
+### Eigene Bedienelemente und Status
 
-**Wichtige Einschränkung:** Ein eigenes PHP-Tastenfeld kann verschlüsselte **Script-Aktionen** ausführen, aber kein **Visualisierungsziel** öffnen. Dafür benötigt Protected Action die Client-Zuordnung der eingebauten Kachel. Bei einer gültigen Ziel-PIN liefert `PRACT_Enter()` `false` und den Status `VISUALIZATION_REQUIRED`.
+| Methode | Weitere Parameter | Rückgabe | Beschreibung |
+| --- | --- | --- | --- |
+| `PRACT_InputDigit` | `int $Digit` | `bool` | Eine Ziffer anhängen. Im Mustermodus Punkte `1` bis `9`; keine direkten Wiederholungen. In der Super-PIN-Eingabe Ziffern `0` bis `9`. `false` bei gesperrter, ungültiger oder zu langer Eingabe. |
+| `PRACT_Clear` | Keine | `void` | Laufende Eingabe und temporäre Meldung löschen. |
+| `PRACT_Enter` | Keine | `bool` | Eingabe bestätigen. `true` bei erfolgreicher Scriptaktion oder Entsperrung. |
+| `PRACT_GetState` | Keine | `string` | JSON mit Status, Anzahl Aktionen und weiteren Instanzangaben zurückgeben. |
 
-### Status für eigene Visualisierungen
+Eigene Tasten können Ziffern mit `PRACT_InputDigit()` übergeben, mit `PRACT_Clear()` löschen und mit `PRACT_Enter()` bestätigen. Die Sperrregeln gelten auch für diese Eingaben.
 
-`PRACT_GetState($InstanzID)` liefert JSON mit folgenden Feldern:
+**Navigationsziele benötigen die eingebaute Kachel.** Ein PHP-Aufruf von `PRACT_Enter()` kann keinem Visualisierungsclient zugeordnet werden. Ein gültiger Zugangscode für ein Navigationsziel liefert dann `false` mit der Meldung `VISUALIZATION_REQUIRED`.
+
+Die Variable **Status** enthält JSON mit folgenden Feldern:
 
 | Feld | Bedeutung |
 | --- | --- |
-| `Message` | Stabiler Meldungscode (siehe oben). |
-| `InputActive` | Mindestens eine Ziffer eingegeben; weder Ziffern noch Anzahl werden veröffentlicht. |
-| `Locked` | PIN-Eingabe aktuell gesperrt. |
-| `LockUntil` | Unix-Zeitstempel für Ende einer temporären Sperre, sonst `0`. |
+| `Message` | Meldungscode, siehe unten. |
+| `InputActive` | Eine Eingabe liegt im serverseitigen Puffer. Laufende Zeichengesten werden erst beim Loslassen übermittelt. |
+| `Locked` | Eingabe aktuell gesperrt. |
+| `LockUntil` | Ende einer vorübergehenden Sperre als Unix-Zeitstempel, sonst `0`. |
 | `PermanentlyLocked` | Dauerhafte Sperre aktiv. |
-| `RecoveryMode` | Super-PIN-Eingabe aktiv. |
-| `ServerTime` | Unix-Zeitstempel der Abfrage. |
+| `RecoveryMode` | Interaktive Super-PIN-Eingabe aktiv. |
+| `ServerTime` | Aktuelle Serverzeit als Unix-Zeitstempel. |
+
+`PRACT_GetState()` liefert zusätzlich:
+
+| Feld | Bedeutung |
+| --- | --- |
 | `RegisteredActions` | Anzahl registrierter Aktionen. |
-| `FailedAttempts` | Fehlversuche bei regulärer PIN-Eingabe. |
-| `RecoveryDefined` | Super-PIN registriert. |
-| `InputMode` | `0` = PIN, `1` = Muster. |
-| `InputModeLocked` | Eingabemodus nur nach Reset änderbar. |
-| `CodeBound` | Aktuell konfigurierte Codebindung. |
-| `CodeBindingLocked` | Codebindung nur nach Reset änderbar. |
+| `FailedAttempts` | Anzahl regulärer Fehlversuche. |
+| `RecoveryDefined` | Ein Super-PIN ist registriert. |
+| `InputMode` | `0` für PIN, `1` für Muster. |
+| `InputModeLocked` | Eingabemodus kann nur nach Reset geändert werden. |
+| `CodeBound` | Codebindung eingeschaltet. |
+| `CodeBindingLocked` | Codebindung kann nur nach Reset geändert werden. |
 
-Die String-Variable `Status` (Ident `Status`) enthält die ersten sieben Felder, nicht aber die letzten sieben administrativen Angaben. Beispiel:
+Die Meldungscodes bleiben unabhängig von der Anzeigesprache gleich:
 
-```php
-$Status = json_decode(PRACT_GetState(12345), true, 512, JSON_THROW_ON_ERROR);
-if ($Status['Locked']) {
-    // Eigene Zifferntasten sperren oder eine Meldung anzeigen.
-}
-```
+| Code | Bedeutung |
+| --- | --- |
+| `READY` | Bereit zur Eingabe. |
+| `INPUT_ACTIVE` | Eingabe liegt vor. |
+| `PIN_INVALID` | PIN oder Muster ungültig. |
+| `ACTION_EXECUTED` | Aktion erfolgreich ausgeführt. |
+| `ACTION_FAILED` | Zugangscode erkannt, Aktion jedoch fehlgeschlagen. |
+| `TEMPORARILY_LOCKED` | Vorübergehend gesperrt. |
+| `PERMANENTLY_LOCKED` | Dauerhaft gesperrt. |
+| `RECOVERY_ACTIVE` | Super-PIN-Eingabe freigegeben. |
+| `SUPER_PIN_INVALID` | Super-PIN ungültig. |
+| `UNLOCKED` | Erfolgreich entsperrt. |
+| `VISUALIZATION_REQUIRED` | Für dieses Navigationsziel die eingebaute Kachel verwenden. |
 
-### Konfigurationsparameter
+Die Statusausgaben enthalten keine Zugangscodes, Scriptinhalte, Parameter oder Ziel-IDs. Bei erfolgreicher Navigation wird die Ziel-ID über den Visualisierungskanal übertragen und ist dabei technisch auch für andere verbundene Clients sichtbar.
 
-| Einstellung | Standard | Bedeutung |
-| --- | ---: | --- |
-| Eingabemodus | PIN (0) | PIN oder Muster (1); nach erster Registrierung gesperrt. |
-| Bei Änderungen am Modulcode Neuregistrierung verlangen | ein | Codebindung; ausgeschaltet bleiben Registrierungen bei kompatiblen Updates erhalten. Nach erster Registrierung gesperrt. |
-| Verzögerung nach Fehlversuchen | 3 | Schwelle für temporäre Sperren. |
-| Basisverzögerung | 20 s | Basisdauer einer Sperre. |
-| Permanente Sperre nach Fehlversuchen | 5 | Schwelle für dauerhafte Sperre. |
-| Eingabe-Timeout | 20 s | Unvollständige Eingabe nach Inaktivität löschen. |
-| Wiederherstellungsversuche | 3 | Erlaubte falsche Super-PIN-Eingaben. |
-| Anzeigedauer temporärer Meldungen | 3 s | Dauer einer Rückmeldung. |
-| Ziffern mischen | aus | Ziffernanordnung in der eingebauten Kachel mischen. |
-| Mischintervall bei Inaktivität | 0 s | Periodisches Neumischen (`0` deaktiviert). |
-
-## Sicherheitsgrenzen
-
-Verschlüsselt werden importierter Scripttext, Parameter und Visualisierungsziel-IDs. Externe Symcon-Objekte, Dateien, Logs und APIs sind nicht geschützt. Administratoren mit Zugriff auf IP-Symcon können die PIN-Eingabe manipulieren. Kurze PINs bleiben bei Zugriff auf verschlüsselte Daten grundsätzlich offline angreifbar, auch wenn Argon2id solche Versuche erschwert. Protected Action ist keine vollständige Zutritts- oder Alarmanlage.
+`PRACT_InternalTimer()` ist ein interner Timeraufruf. `RequestAction()`, `GetConfigurationForm()` und `GetVisualizationTile()` werden vom Symcon-System verwendet.

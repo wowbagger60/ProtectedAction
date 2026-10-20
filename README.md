@@ -1,41 +1,45 @@
-# Protected Action
+# ProtectedAction
 
-Protected Action executes an encrypted action only after a registered PIN or pattern has
-been entered. An action can contain either an imported Symcon script or a
-visualization target.
+ProtectedAction runs stored actions after a PIN or pattern has been entered. It can execute Symcon scripts or open a destination in the visualization. Stored actions are encrypted. One use case is protecting access to the visualization's editing controls.
 
-This module is not a replacement for IP-Symcon access controls or a complete alarm system.
+## Setup
 
-## Setup and code binding
+### 1. Configure the instance
 
-1. Select **PIN** or **Pattern** input mode.
-2. Set **Require re-registration after module code changes**. It is **enabled by default**.
-3. Apply the configuration, then register actions and the Super PIN.
+Install ProtectedAction from the Module Store and create an instance. Choose and apply these two settings before registering the first action:
 
-| Code binding | Behaviour after module code changes |
-| --- | --- |
-| Enabled (default) | PHP and tile contents participate in key derivation. Changes invalidate existing registrations. Reset and re-register. |
-| Disabled | Encrypted actions and the Super PIN survive compatible updates. Module contents are excluded from key derivation. |
+- **Input mode:** PIN for the numeric keypad or Pattern for the drawing pad. Each instance uses one of these modes. You can register different PINs or patterns for different actions.
+- **Code binding:** **Require re-registration after module code changes** is enabled by default. It provides additional protection: if the module code changes, existing actions and the Super PIN can no longer be decrypted. After a module update that changes the code, reset and re-register them. With code binding disabled, registrations survive compatible module updates. An update to Symcon itself is not what this setting refers to.
 
-**Input mode and code binding are locked after the first action or Super PIN registration.** Removing the final action does not release either lock. Changing either option requires an explicit reset:
+**Both settings are locked after the first action or Super PIN registration.** To change them, reset the instance with `PRACT_Reset()`, apply the new settings and register all actions and the Super PIN again. Reset deletes the existing registrations.
+
+### 2. Create an action script
+
+Create and test a normal Symcon script containing the desired action. For example, it could toggle the visualization's editing controls or switch on a light.
+
+Then use a separate registration script to assign that script to a PIN or pattern. In the examples below, `12345` is the ProtectedAction instance and `67890` is the tested action script. Replace these IDs with your own.
+
+#### Register an action with a PIN
+
+For an instance configured for **PIN**:
 
 ```php
-PRACT_Reset(12345);
+var_dump(PRACT_RegisterAction(12345, '482619', 67890, []));
 ```
 
-Reset deletes all actions, the Super PIN, locks and counters. Select and apply the desired options before registering again. Changing a locked option through the API also blocks input and registration. Restore the original option value to continue using the existing registrations.
+A PIN must contain 4 to 16 digits.
 
-Without code binding, authenticated encryption remains in place, but protection against module code changes is intentionally removed. This is a convenience choice, for example for unlocking edit controls. Update resistance requires unchanged or explicitly compatible data formats and key derivation; it cannot guarantee compatibility with arbitrary future format changes.
+Entering PIN `482619` now runs the action. `true` confirms successful registration. If it returns `false`, check the settings, access code and script ID.
 
-### Upgrading to 1.1 Build 3
+#### Register an action with a pattern
 
-This build removes four length settings and introduces optional code binding with a new encryption format. **Registrations from earlier builds require a one-time reset and re-registration.** No automatic decryption or conversion is performed, and existing code-bound records are never silently treated as update-independent records.
+For an instance configured for **Pattern**, use the same method and pass the visited points as a string:
 
-For future compatible updates without re-registration, disable code binding **after reset and before the first registration**. The option cannot migrate or unlock existing code-bound data.
+```php
+var_dump(PRACT_RegisterAction(12345, '13971', 67890, []));
+```
 
-## Pattern input
-
-Point numbering, from top left to bottom right:
+Points are numbered from top left to bottom right:
 
 | Left | Middle | Right |
 | --- | --- | --- |
@@ -43,265 +47,168 @@ Point numbering, from top left to bottom right:
 | 4 | 5 | 6 |
 | 7 | 8 | 9 |
 
-The existing registration API is unchanged. For a closed square:
+`13971` describes a closed square. ProtectedAction automatically inserts intermediate points where a straight connection passes over them. For example, `13` also includes `2`. You may return to a previous point, but cannot repeat the same point consecutively. Zero is not a valid pattern point.
+
+A pattern contains 2 to 16 point visits, including automatically inserted intermediate points.
+
+#### What is stored?
+
+Registration copies the complete action script into encrypted storage. The original script is no longer needed afterwards. Once the protected action has been tested successfully, you can delete the original script if its contents should not remain openly accessible in the system. ProtectedAction does not delete it automatically.
+
+Later changes to the original script do not affect the registered action. Register the action again to import changes. Reusing an access code replaces its previous action.
+
+The final argument, `[]`, is for script parameters. If your script needs parameters, supply an array here; the running script receives those values through `$_IPS`. Always pass `[]` when no parameters are needed.
+
+**After testing, also remove the PIN or pattern and sensitive parameters from the registration script.**
+
+### 3. Alternatively, register a navigation target
+
+Instead of a script ID, pass the object ID of the visualization destination, such as a category:
 
 ```php
-var_dump(PRACT_RegisterAction(12345, '13971', 67890, []));
+var_dump(PRACT_RegisterAction(12345, '739184', 54321, []));
 ```
 
-The object may be a tested script or a visualization target; targets require an empty parameter array. Remove the code from the registration script afterwards.
+This example uses PIN `739184`. In pattern mode, use a valid point sequence such as `'159'` instead. `54321` is the target ID. Keep the parameter array empty for navigation targets.
 
-- Digits `1`–`9` only; no zero, stars, or consecutive repeated points. Returning to a previously visited point is allowed (`131`).
-- Exact straight-line midpoints are inserted server-side for registration and verification: `13` becomes `123`, `19` becomes `159`, and `13971` becomes `123698741`. `16` and `15` have no midpoint. Midpoints are inserted even if previously visited, unlike Android patterns.
-- Registrations with the same expanded sequence replace the same action.
-- Hold the left mouse button, touch, or pen and draw. Releasing submits the gesture, without an Enter button.
-- Square drawing area, fixed hit areas, exact point sequence, no tolerant recognition. Additional detected points invalidate the pattern.
-- No point highlighting or visible sequence. The trail fades over approximately 650 ms and is cleared on release.
-- Cancelled and empty gestures are not failed attempts. A completed wrong or overlong gesture counts once.
-- Partial gestures stay local; only the completed sequence is submitted. The server's `InputActive` field does not report a local gesture in progress. The input timeout cancels an inactive gesture.
-- Recovery always displays a numeric keypad. Existing scrambling settings also apply to this recovery keypad.
+ProtectedAction detects whether the object is a script or a navigation target. After successful input, the destination opens only on the client where the access code was entered.
 
-`PRACT_Unregister()` accepts the same pattern as registration. In pattern mode, `PRACT_InputDigit()` accepts points `1`–`9`, rejects zero and consecutive repetitions, and `PRACT_Enter()` submits. Client-specific navigation still requires the built-in tile. PIN, pattern and recovery have separate key-derivation domains.
+A navigation target may also be hidden. This allows navigation to categories that are normally not visible in the visualization.
 
-## Fixed code lengths
+### 4. Set up the Super PIN
 
-| Input | Minimum | Maximum |
-| --- | ---: | ---: |
-| PIN | 4 digits | 16 digits |
-| Pattern | 2 point visits | 16 point visits |
-| Super PIN | 4 digits | 16 digits |
-
-Pattern limits count the **expanded sequence**, including mandatory straight-line midpoints. The square `13971` therefore counts nine visits. The former four length settings are removed. Limits are enforced server-side and for input buffers. Choose a sufficiently long, independent Super PIN.
-
-## Register a script action
-
-First create and test a normal Symcon script. For example:
+Register a separate Super PIN for unlocking the instance later:
 
 ```php
-IPS_SetHidden($_IPS['OBJECT_ID'], $_IPS['HIDDEN']);
+var_dump(PRACT_RegisterSuperPIN(12345, '8073519264'));
 ```
 
-Then import it with a temporary registration script:
+The Super PIN is always numeric, even in pattern mode. Choose a sufficiently long, separate code and keep it safe. Remove it from the registration script afterwards. Registration alone does not start recovery.
+
+The Super PIN must contain 4 to 16 digits.
+
+## Operation
+
+Use the ProtectedAction instance as a tile in the visualization. It displays a numeric keypad or a square drawing pad, depending on the configured input mode.
+
+### Input and execution
+
+- **PIN:** Tap or click the digits. **C** clears the current input; **E** submits it. Digit positions can optionally be shuffled.
+- **Pattern:** Touch with your finger or pen, or hold the left mouse button, and trace the registered point sequence. Lifting your finger or pen, or releasing the mouse button, submits it. A fading trail helps you follow the movement.
+
+A matching access code decrypts the stored action. ProtectedAction executes the stored script contents or opens the registered navigation target. The tile displays the result.
+
+Incomplete input is discarded after the configured input timeout. A cancelled drawing gesture does not count as a failed attempt.
+
+### Failed attempts and unlocking
+
+Incorrect access codes count as failed attempts. Initially, input is temporarily locked. After the configured number of consecutive failures, ProtectedAction remains permanently locked. A successful regular entry resets the failure counter.
+
+To unlock it from a script, pass the Super PIN:
 
 ```php
-var_dump(PRACT_RegisterAction(
-    12345,      // Protected Action instance
-    '123456',   // PIN
-    67890,      // tested source script
-    [
-        'OBJECT_ID' => 54321,
-        'HIDDEN'    => false
-    ]
-));
+var_dump(PRACT_Unlock(12345, '8073519264'));
 ```
 
-Protected Action reads the source script immediately and encrypts its complete
-content together with the parameters. At execution time the parameters are
-available through `$_IPS`. The source script ID is not stored and later changes
-to that script have no effect on the imported action.
+No preceding `PRACT_BeginRecovery()` call is required. A correct Super PIN unlocks the instance and resets the failure counters. Incorrect Super PINs also have a configurable attempt limit. Interactive recovery through the numeric keypad is described in the API section.
 
-After testing the protected action successfully, delete the source script
-manually or remove its sensitive content. Protected Action never deletes it
-automatically. Also remove the PIN and parameters from the temporary
-registration script.
+### Other settings
 
-## Register a visualization target
+| Setting | Default | Effect |
+| --- | --- | --- |
+| Start delay after failed attempts | 3 | Start temporary lockouts at this failed attempt. |
+| Base delay | 20 seconds | Lock for 20 seconds at the first delayed attempt, 40 at the next, and so on. |
+| Permanently lock after failed attempts | 5 | Apply permanent lockout at this failed attempt. |
+| Input timeout | 20 seconds | Discard incomplete input after inactivity. |
+| Recovery attempts | 3 | Allowed incorrect Super PIN entries per recovery round. |
+| Display duration for temporary messages | 3 seconds | How long feedback remains visible. |
+| Scramble digits | Off | Shuffle keypad digits, including during interactive recovery. |
+| Scramble interval while idle | 0 seconds | Periodically reshuffle the keypad; `0` disables the interval. |
 
-Pass any existing non-script object without parameters:
+### Scope of protection
 
-```php
-var_dump(PRACT_RegisterAction(
-    12345,      // Protected Action instance
-    '654321',   // PIN
-    54321,      // category or other visualization target
-    []          // no parameters for targets
-));
-```
+ProtectedAction protects stored actions with encryption, failure lockouts and optional code binding. It is intended as a convenience safeguard and does not replace Symcon access controls. An administrator of the Symcon system can also modify the input process. Other system objects and files are not protected by the module. In particular, the original action script remains readable until it is deleted.
 
-After the PIN has been entered through the built-in tile, the target opens only
-on the client which submitted that PIN. Protected Action correlates the request
-with a temporary random request ID. Other open clients ignore the navigation
-message.
+## API
 
-Visualization targets cannot be opened through `PRACT_Enter()`, because a PHP
-API call has no associated visualization client. A correct PIN then returns
-`false` and publishes the message code `VISUALIZATION_REQUIRED`. Script actions
-continue to work through both the built-in tile and the public keypad API.
+Every call takes the ProtectedAction instance ID as its first argument. Always pass PINs and patterns as **strings**, preserving leading zeroes. The following tables list only the remaining arguments.
 
-The target ID is encrypted at rest. During successful navigation it is sent
-briefly through Symcon's visualization channel and is therefore not secret from
-other connected clients. Hiding an object is a convenience feature, not access
-control.
+### Manage actions and the Super PIN
 
-## Registration behaviour
-
-`PRACT_RegisterAction()` detects the action type automatically:
-
-- A script is imported as encrypted script text together with its parameters.
-- Any other existing object is stored as an encrypted visualization target;
-  parameters are rejected for this action type.
-- A missing object or an empty source script is rejected.
-
-Registering the same PIN again replaces its previous action. Remove an action
-with:
-
-```php
-PRACT_Unregister(12345, '123456');
-```
-
-
-## Public API reference
-
-All calls use the Protected Action instance ID as their first argument. The `PRACT_` functions are the IP-Symcon wrappers around the module methods. PINs are strings (including leading zeros), not integers.
-
-| Function | Arguments after instance ID | Result | Purpose |
+| Method | Additional arguments | Return | Description |
 | --- | --- | --- | --- |
-| `PRACT_RegisterAction` | `string $PIN, int $ObjectID, array $Parameters = []` | `bool` | Encrypt a copy of a script and its parameters, or register a non-script object as a visualization target. Reusing a PIN replaces the action. |
-| `PRACT_Unregister` | `string $PIN` | `bool` | Remove the action assigned to a PIN; `false` if not found or invalid. |
-| `PRACT_RegisterSuperPIN` | `string $PIN` | `bool` | Register or replace the recovery PIN. |
-| `PRACT_Unlock` | `string $SuperPIN` | `bool` | Unlock directly with the Super PIN, without BeginRecovery. Shares the existing recovery attempt budget. |
-| `PRACT_InputDigit` | `int $Digit` | `bool` | Append one digit (`0`–`9`); `false` when input is locked, invalid, or full. |
-| `PRACT_Clear` | none | `void` | Clear the current PIN entry and temporary message. |
-| `PRACT_Enter` | none | `bool` | Submit the entered PIN. `true` on successful script execution or recovery; navigation targets require the built-in visualization tile. |
-| `PRACT_BeginRecovery` | none | `bool` | Start Super PIN entry; only available after permanent lockout with a Super PIN registered. |
-| `PRACT_CancelRecovery` | none | `void` | Leave recovery mode without unlocking. |
-| `PRACT_Reset` | none | `void` | **Delete all actions and the Super PIN** and clear locks/counters. No undo. |
-| `PRACT_GetState` | none | `string` | Return a JSON status snapshot, including registration count and failure count. |
+| `PRACT_RegisterAction` | `string $PIN, int $ObjectID, array $Parameters` | `bool` | Import an action script with parameters or register a navigation target. `$PIN` contains a PIN or pattern according to the instance mode. Pass `[]` for unused parameters. Reusing the access code replaces the action. |
+| `PRACT_Unregister` | `string $PIN` | `bool` | Remove the action assigned to the PIN or pattern. Returns `false` if the code is invalid or unregistered. |
+| `PRACT_RegisterSuperPIN` | `string $PIN` | `bool` | Register or replace the numeric Super PIN. |
+| `PRACT_Reset` | None | `void` | Delete all actions and the Super PIN, reset locks and counters, and allow input mode and code binding to be changed. |
 
-`PRACT_InternalTimer()` is a technical timer callback, **not** part of the user-facing API. `RequestAction()` and `GetVisualizationTile()` are framework integration methods, not recommended for direct scripting.
+### Unlocking and interactive recovery
 
-### Build your own PIN keypad
+| Method | Additional arguments | Return | Description |
+| --- | --- | --- | --- |
+| `PRACT_Unlock` | `string $SuperPIN` | `bool` | Directly unlock a permanently locked instance. No preceding `BeginRecovery()` required. Returns `true` only on successful recovery. |
+| `PRACT_BeginRecovery` | None | `bool` | Start a new recovery round and enable the keypad for Super PIN entry. Requires permanent lockout and a registered Super PIN. |
+| `PRACT_CancelRecovery` | None | `void` | End interactive recovery without unlocking. Previous recovery failures are preserved. |
 
-You can replace the built-in keypad with your own controls, for example buttons in a custom visualization or actions triggered by a separate input device. Route each digit to `PRACT_InputDigit()`, the delete/clear button to `PRACT_Clear()`, and the confirmation button to `PRACT_Enter()`:
+For interactive recovery, call `PRACT_BeginRecovery(12345)`, enter the Super PIN on the keypad and confirm with **E**.
 
-```php
-// Script invoked by your own controls; adapt the source of $Key.
-$InstanceID = 12345;
-$Key = (string) $_IPS['VALUE']; // Example: '0'..'9', 'C', 'E'
+`Unlock()` and interactive entry share the same recovery counter. Once the recovery attempt limit is exhausted, even a correct Super PIN is rejected. The administrator can explicitly start a new round with `PRACT_BeginRecovery()`. Repeated `Unlock()` calls do not reset the counter.
 
-if (preg_match('/^[0-9]$/', $Key) === 1) {
-    PRACT_InputDigit($InstanceID, (int) $Key);
-} elseif ($Key === 'C') {
-    PRACT_Clear($InstanceID);
-} elseif ($Key === 'E') {
-    PRACT_Enter($InstanceID);
-}
-```
+If the instance is not permanently locked or has no registered Super PIN, `Unlock()` returns `false` without consuming an attempt.
 
-The example assumes that your control passes a single character in `$_IPS['VALUE']`; adjust this to your actual visualization/event setup. Do **not** build the PIN as a plaintext string in a visualization variable or log it. The module collects digits internally, clears the input on submission, and applies its own input timeout and lockout rules. The custom keypad must not attempt to implement PIN validation itself.
+### Custom controls and status
 
-**Important limitation:** Custom PHP controls can execute encrypted **script actions**, but they cannot open a **visualization target**. Client-specific navigation uses the built-in tile's request correlation. A valid visualization-target PIN entered through `PRACT_Enter()` returns `false` with `VISUALIZATION_REQUIRED`.
+| Method | Additional arguments | Return | Description |
+| --- | --- | --- | --- |
+| `PRACT_InputDigit` | `int $Digit` | `bool` | Append a digit. Pattern mode accepts points `1` to `9`, without consecutive repetitions. Super PIN entry accepts digits `0` to `9`. Returns `false` for locked, invalid or overlong input. |
+| `PRACT_Clear` | None | `void` | Clear the current input and temporary feedback. |
+| `PRACT_Enter` | None | `bool` | Submit input. Returns `true` on successful script execution or recovery. |
+| `PRACT_GetState` | None | `string` | Return JSON containing status, registration count and further instance details. |
 
-### Reading state and showing feedback
+Custom buttons can send digits through `PRACT_InputDigit()`, clear them with `PRACT_Clear()` and submit them with `PRACT_Enter()`. The same lockout rules apply.
 
-`PRACT_GetState($InstanceID)` returns JSON with these fields:
+**Navigation targets require the built-in tile.** A PHP call to `PRACT_Enter()` cannot be associated with a visualization client. A valid access code for a navigation target then returns `false` with `VISUALIZATION_REQUIRED`.
+
+The **Status** variable contains JSON with these fields:
 
 | Field | Meaning |
 | --- | --- |
-| `Message` | Stable message code listed above. |
-| `InputActive` | At least one digit has been entered; the digits and their count are not exposed. |
-| `Locked` | PIN entry currently prohibited. |
-| `LockUntil` | Unix timestamp for temporary lock expiry, or `0`. |
-| `PermanentlyLocked` | Permanent lock flag. |
-| `RecoveryMode` | Super PIN entry mode. |
-| `ServerTime` | Unix timestamp of the snapshot. |
-| `RegisteredActions` | Number of stored actions. |
-| `FailedAttempts` | Failed regular PIN attempts. |
-| `RecoveryDefined` | Whether a Super PIN is registered. |
-| `InputMode` | `0` = PIN, `1` = pattern. |
-| `InputModeLocked` | Mode change requires reset. |
-| `CodeBound` | Currently configured code binding. |
-| `CodeBindingLocked` | Binding change requires reset. |
+| `Message` | Message code, listed below. |
+| `InputActive` | Input is present in the server-side buffer. Drawing gestures are submitted only on release. |
+| `Locked` | Input is currently locked. |
+| `LockUntil` | Unix timestamp for the end of a temporary lockout, otherwise `0`. |
+| `PermanentlyLocked` | Permanent lockout is active. |
+| `RecoveryMode` | Interactive Super PIN entry is active. |
+| `ServerTime` | Current server time as a Unix timestamp. |
 
-The `Status` string variable (Ident `Status`) publishes the first seven fields above, but not the final seven administrative fields. Use `PRACT_GetState()` when those additional fields are needed. For example:
+`PRACT_GetState()` additionally returns:
 
-```php
-$state = json_decode(PRACT_GetState(12345), true, 512, JSON_THROW_ON_ERROR);
-if ($state['Locked']) {
-    // Disable your own digit buttons or display a lock message.
-}
-```
+| Field | Meaning |
+| --- | --- |
+| `RegisteredActions` | Number of registered actions. |
+| `FailedAttempts` | Number of regular failed attempts. |
+| `RecoveryDefined` | A Super PIN is registered. |
+| `InputMode` | `0` for PIN, `1` for pattern. |
+| `InputModeLocked` | Changing input mode requires a reset. |
+| `CodeBound` | Code binding is enabled. |
+| `CodeBindingLocked` | Changing code binding requires a reset. |
 
-### Configuration options
+Message codes are independent of the display language:
 
-| Option | Default | Meaning |
-| --- | ---: | --- |
-| Input mode | PIN (0) | PIN or pattern (1); frozen after first registration. |
-| Require re-registration after module code changes | on | Code binding; disable for registration persistence across compatible updates. Locked after first registration. |
-| Start delay after failed attempts | 3 | Failure threshold for temporary lockouts. |
-| Base delay | 20 s | Base lockout duration. |
-| Permanently lock after failed attempts | 5 | Failure threshold for permanent lockout. |
-| Input timeout | 20 s | Clear unfinished PIN entry after inactivity. |
-| Recovery attempts | 3 | Allowed unsuccessful Super PIN attempts. |
-| Display duration for temporary messages | 3 s | How long transient feedback is shown. |
-| Scramble digits | off | Randomize digit placement in the built-in keypad. |
-| Scramble interval while idle | 0 s | Optional idle-time reshuffling (`0` disables it). |
+| Code | Meaning |
+| --- | --- |
+| `READY` | Ready for input. |
+| `INPUT_ACTIVE` | Input is present. |
+| `PIN_INVALID` | Invalid PIN or pattern. |
+| `ACTION_EXECUTED` | Action executed successfully. |
+| `ACTION_FAILED` | Access code recognized, but the action failed. |
+| `TEMPORARILY_LOCKED` | Temporarily locked. |
+| `PERMANENTLY_LOCKED` | Permanently locked. |
+| `RECOVERY_ACTIVE` | Super PIN entry is enabled. |
+| `SUPER_PIN_INVALID` | Invalid Super PIN. |
+| `UNLOCKED` | Successfully unlocked. |
+| `VISUALIZATION_REQUIRED` | Use the built-in tile for this navigation target. |
 
-## Security boundary
+Status output contains no access codes, script contents, parameters or target IDs. During successful navigation, the target ID is transmitted over the visualization channel and is technically visible to other connected clients.
 
-Only the imported script text, its parameters, and visualization target IDs
-inside Protected Action are encrypted. Everything an action accesses outside
-the module is visible to and modifiable by Symcon, including variables, other
-scripts, files, instance APIs, logs and remote endpoints. A self-contained
-imported script therefore offers the clearest protection.
-
-An administrator with persistent control of IP-Symcon can modify the PIN input
-path and capture a PIN when it is entered later. Short PINs can also be tested
-offline by anyone who obtains the encrypted module data. Argon2id slows this
-down but cannot compensate for a small keyspace.
-
-## Super PIN and recovery
-
-```php
-PRACT_RegisterSuperPIN(12345, '1234567890');
-PRACT_BeginRecovery(12345);
-```
-
-After `BeginRecovery()`, enter the Super PIN through the keypad and press Enter.
-A successful recovery resets the failure counters. `PRACT_CancelRecovery()`
-ends recovery without unlocking the instance.
-
-Alternatively, unlock directly through the API, without calling `PRACT_BeginRecovery()` first:
-
-```php
-$success = PRACT_Unlock(12345, '1234567890');
-```
-
-`Unlock()` returns `true` only on successful recovery. It requires permanent lockout, a registered Super PIN and valid instance configuration. Calling it on an instance that is not permanently locked returns `false` without consuming an attempt.
-
-Wrong or malformed Super PINs count against the shared recovery attempt budget. Repeated API calls never replenish it. Once exhausted, even a correct Super PIN is rejected until the administrator explicitly starts a new round with `PRACT_BeginRecovery()`. `PRACT_CancelRecovery()` leaves interactive mode but preserves recovery failures. API unlock alone does not switch the tile into recovery mode.
-
-Do not retain the Super PIN in a publicly accessible script or log it. Build 4 keeps Build 3's encryption format: existing update-independent registrations remain usable; code-bound registrations require reset and re-registration because the PHP code changes.
-
-## Tile layout
-
-The keypad or pattern pad is sized to the available visualization content area, not the tile header. No tile/content option is needed.
-
-## Keypad and status
-
-A custom PIN pad can use:
-
-```php
-PRACT_InputDigit(12345, 7);
-PRACT_Clear(12345);
-PRACT_Enter(12345);
-```
-
-The visible string variable with Ident `Status` contains machine-readable JSON.
-Its `Message` field uses stable codes:
-
-- `READY`
-- `INPUT_ACTIVE`
-- `PIN_INVALID`
-- `ACTION_EXECUTED`
-- `ACTION_FAILED`
-- `VISUALIZATION_REQUIRED`
-- `TEMPORARILY_LOCKED`
-- `PERMANENTLY_LOCKED`
-- `RECOVERY_ACTIVE`
-- `SUPER_PIN_INVALID`
-- `UNLOCKED`
-
-It never contains a PIN, PIN length, script text, parameters or target ID.
-Protected Action does not implement toggle state; the imported action is
-responsible for all state-dependent behaviour.
+`PRACT_InternalTimer()` is an internal timer callback. `RequestAction()`, `GetConfigurationForm()` and `GetVisualizationTile()` are used by Symcon itself.
