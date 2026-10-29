@@ -9,7 +9,7 @@ ProtectedAction runs stored actions after a PIN or pattern has been entered. It 
 Install ProtectedAction from the Module Store and create an instance. Choose and apply these two settings before registering the first action:
 
 - **Input mode:** PIN for the numeric keypad or Pattern for the drawing pad. Each instance uses one of these modes. You can register different PINs or patterns for different actions.
-- **Code binding:** **Require re-registration after module code changes** is enabled by default. It provides additional protection: if the module code changes, existing actions and the Super PIN can no longer be decrypted. After a module update that changes the code, reset and re-register them. With code binding disabled, registrations survive compatible module updates. An update to Symcon itself is not what this setting refers to.
+- **Code binding:** **Require re-registration after module code changes** is enabled by default. It provides additional protection: if the module code changes, existing actions and the Super PIN can no longer be decrypted. After a module update that changes the code, reset and re-register them. With code binding disabled, registrations survive compatible module updates. An update to Symcon itself is not what this setting refers to. When the module code has changed, the instance shows **Re-registration required**, and correct input does not count as a failed attempt.
 
 **Both settings are locked after the first action or Super PIN registration.** To change them, reset the instance with `PRACT_Reset()`, apply the new settings and register all actions and the Super PIN again. Reset deletes the existing registrations.
 
@@ -98,7 +98,7 @@ Use the ProtectedAction instance as a tile in the visualization. It displays a n
 
 A matching access code decrypts the stored action. ProtectedAction executes the stored script contents or opens the registered navigation target. The tile displays the result.
 
-Incomplete input is discarded after the configured input timeout. A cancelled drawing gesture does not count as a failed attempt.
+Incomplete input is discarded after the configured input timeout. An empty **E**, a single tap on the drawing area and a cancelled drawing gesture do not count as failed attempts.
 
 ### Failed attempts and unlocking
 
@@ -122,7 +122,7 @@ No preceding `PRACT_BeginRecovery()` call is required. A correct Super PIN unloc
 | Input timeout | 20 seconds | Discard incomplete input after inactivity. |
 | Recovery attempts | 3 | Allowed incorrect Super PIN entries per recovery round. |
 | Display duration for temporary messages | 3 seconds | How long feedback remains visible. |
-| Scramble digits | Off | Shuffle keypad digits, including during interactive recovery. |
+| Scramble digits | Off | Shuffle keypad digits. In pattern mode, this applies only to the keypad for Super PIN entry. |
 | Scramble interval while idle | 0 seconds | Periodically reshuffle the keypad; `0` disables the interval. |
 
 ### Scope of protection
@@ -174,7 +174,7 @@ The **Status** variable contains JSON with these fields:
 | Field | Meaning |
 | --- | --- |
 | `Message` | Message code, listed below. |
-| `InputActive` | Input is present in the server-side buffer. Drawing gestures are submitted only on release. |
+| `InputActive` | Input from `PRACT_InputDigit()` is present in the server-side buffer. Input on the built-in tile stays on the client until it is submitted. |
 | `Locked` | Input is currently locked. |
 | `LockUntil` | Unix timestamp for the end of a temporary lockout, otherwise `0`. |
 | `PermanentlyLocked` | Permanent lockout is active. |
@@ -192,6 +192,7 @@ The **Status** variable contains JSON with these fields:
 | `InputModeLocked` | Changing input mode requires a reset. |
 | `CodeBound` | Code binding is enabled. |
 | `CodeBindingLocked` | Changing code binding requires a reset. |
+| `ReregistrationRequired` | The module code has changed. Reset and register again. |
 
 Message codes are independent of the display language:
 
@@ -208,6 +209,7 @@ Message codes are independent of the display language:
 | `SUPER_PIN_INVALID` | Invalid Super PIN. |
 | `UNLOCKED` | Successfully unlocked. |
 | `VISUALIZATION_REQUIRED` | Use the built-in tile for this navigation target. |
+| `REREGISTRATION_REQUIRED` | The module code has changed. Reset and register again. |
 
 Status output contains no access codes, script contents, parameters or target IDs. During successful navigation, the target ID is transmitted over the visualization channel and is technically visible to other connected clients.
 

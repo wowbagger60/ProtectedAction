@@ -20,6 +20,11 @@
             "code": 202,
             "icon": "error",
             "caption": "Invalid configuration or locked registration options"
+        },
+        {
+            "code": 203,
+            "icon": "error",
+            "caption": "Module code changed. Re-registration required"
         }
     ],
     "url": "https://www.cassanisautomation.fr"

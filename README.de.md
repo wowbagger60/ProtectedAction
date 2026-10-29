@@ -9,7 +9,7 @@ ProtectedAction führt hinterlegte Aktionen nach Eingabe einer PIN oder eines Mu
 ProtectedAction aus dem Module Store installieren und eine Instanz anlegen. Vor dem Registrieren der ersten Aktion zwei Einstellungen wählen und übernehmen:
 
 - **Eingabemodus:** PIN für das Zahlenpad oder Muster für die Zeichenfläche. Eine Instanz verwendet einen dieser beiden Modi. Für mehrere Aktionen lassen sich verschiedene PINs beziehungsweise Muster hinterlegen.
-- **Codebindung:** Die Option **Bei Änderungen am Modulcode Neuregistrierung verlangen** ist standardmässig eingeschaltet. Sie bietet zusätzlichen Schutz: Wird der Modulcode geändert, können die bisherigen Aktionen und der Super-PIN nicht mehr entschlüsselt werden. Nach einem Modulupdate mit solchen Änderungen müssen sie deshalb zurückgesetzt und neu registriert werden. Ohne Codebindung bleiben sie bei kompatiblen Modulupdates erhalten. Ein Update von Symcon selbst ist damit nicht gemeint.
+- **Codebindung:** Die Option **Bei Änderungen am Modulcode Neuregistrierung verlangen** ist standardmässig eingeschaltet. Sie bietet zusätzlichen Schutz: Wird der Modulcode geändert, können die bisherigen Aktionen und der Super-PIN nicht mehr entschlüsselt werden. Nach einem Modulupdate mit solchen Änderungen müssen sie deshalb zurückgesetzt und neu registriert werden. Ohne Codebindung bleiben sie bei kompatiblen Modulupdates erhalten. Ein Update von Symcon selbst ist damit nicht gemeint. Hat sich der Modulcode geändert, zeigt die Instanz **Neuregistrierung erforderlich** an, und eine korrekte Eingabe zählt nicht als Fehlversuch.
 
 **Nach der ersten Aktion oder Super-PIN-Registrierung sind beide Einstellungen gesperrt.** Zum Ändern die Instanz mit `PRACT_Reset()` zurücksetzen, die neuen Einstellungen übernehmen und alle Aktionen sowie den Super-PIN neu registrieren. Reset löscht die vorhandenen Registrierungen.
 
@@ -98,7 +98,7 @@ Die ProtectedAction-Instanz in der Visualisierung als Kachel verwenden. Je nach 
 
 Bei einem passenden Zugangscode entschlüsselt ProtectedAction die hinterlegte Aktion. Der gespeicherte Scriptinhalt wird ausgeführt oder das registrierte Navigationsziel geöffnet. Die Kachel zeigt das Ergebnis an.
 
-Eine unvollständige Eingabe wird nach dem konfigurierten Eingabe-Timeout verworfen. Eine abgebrochene Zeichengeste zählt nicht als Fehlversuch.
+Eine unvollständige Eingabe wird nach dem konfigurierten Eingabe-Timeout verworfen. Ein leeres **E**, ein einzelner Tipp auf die Zeichenfläche und eine abgebrochene Zeichengeste zählen nicht als Fehlversuch.
 
 ### Fehlversuche und Entsperren
 
@@ -122,7 +122,7 @@ Ein vorheriges `PRACT_BeginRecovery()` ist dafür nicht nötig. Bei korrektem Su
 | Eingabe-Timeout | 20 Sekunden | Unvollständige Eingabe nach Inaktivität verwerfen. |
 | Wiederherstellungsversuche | 3 | Erlaubte falsche Super-PIN-Eingaben pro Recovery-Runde. |
 | Anzeigedauer temporärer Meldungen | 3 Sekunden | Wie lange eine Rückmeldung sichtbar bleibt. |
-| Ziffern mischen | Aus | Ziffernpositionen im Zahlenpad mischen, auch bei interaktiver Recovery. |
+| Ziffern mischen | Aus | Ziffernpositionen im Zahlenpad mischen. Im Mustermodus gilt das nur für das Zahlenpad der Super-PIN-Eingabe. |
 | Mischintervall bei Inaktivität | 0 Sekunden | Zahlenpad regelmässig neu mischen; `0` deaktiviert das Intervall. |
 
 ### Schutzumfang
@@ -174,7 +174,7 @@ Die Variable **Status** enthält JSON mit folgenden Feldern:
 | Feld | Bedeutung |
 | --- | --- |
 | `Message` | Meldungscode, siehe unten. |
-| `InputActive` | Eine Eingabe liegt im serverseitigen Puffer. Laufende Zeichengesten werden erst beim Loslassen übermittelt. |
+| `InputActive` | Eine Eingabe über `PRACT_InputDigit()` liegt im serverseitigen Puffer. Eingaben in der Kachel bleiben bis zum Absenden auf dem Client. |
 | `Locked` | Eingabe aktuell gesperrt. |
 | `LockUntil` | Ende einer vorübergehenden Sperre als Unix-Zeitstempel, sonst `0`. |
 | `PermanentlyLocked` | Dauerhafte Sperre aktiv. |
@@ -192,6 +192,7 @@ Die Variable **Status** enthält JSON mit folgenden Feldern:
 | `InputModeLocked` | Eingabemodus kann nur nach Reset geändert werden. |
 | `CodeBound` | Codebindung eingeschaltet. |
 | `CodeBindingLocked` | Codebindung kann nur nach Reset geändert werden. |
+| `ReregistrationRequired` | Der Modulcode wurde geändert. Zurücksetzen und neu registrieren. |
 
 Die Meldungscodes bleiben unabhängig von der Anzeigesprache gleich:
 
@@ -208,6 +209,7 @@ Die Meldungscodes bleiben unabhängig von der Anzeigesprache gleich:
 | `SUPER_PIN_INVALID` | Super-PIN ungültig. |
 | `UNLOCKED` | Erfolgreich entsperrt. |
 | `VISUALIZATION_REQUIRED` | Für dieses Navigationsziel die eingebaute Kachel verwenden. |
+| `REREGISTRATION_REQUIRED` | Der Modulcode wurde geändert. Zurücksetzen und neu registrieren. |
 
 Die Statusausgaben enthalten keine Zugangscodes, Scriptinhalte, Parameter oder Ziel-IDs. Bei erfolgreicher Navigation wird die Ziel-ID über den Visualisierungskanal übertragen und ist dabei technisch auch für andere verbundene Clients sichtbar.
 

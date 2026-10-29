@@ -129,17 +129,21 @@
         RECOVERY_ACTIVE: 'Enter Super PIN',
         SUPER_PIN_INVALID: 'Super PIN invalid',
         UNLOCKED: 'Unlocked',
-        VISUALIZATION_REQUIRED: 'Use the built-in input tile'
+        VISUALIZATION_REQUIRED: 'Use the built-in input tile',
+        REREGISTRATION_REQUIRED: 'Re-registration required'
     };
     let tileState = {
         Message: 'READY', InputActive: false, Locked: false, LockUntil: 0,
         ServerTime: 0, receivedAt: Date.now(), Scramble: false, ScrambleInterval: 0,
-        InputMode: 0, RecoveryMode: false, MaximumPatternLength: 16, InputTimeout: 20
+        InputMode: 0, RecoveryMode: false, MinimumPatternLength: 2, MaximumPatternLength: 16, InputTimeout: 20
     };
     let scrambleTimer = null;
     let refreshRequested = false;
     let pendingNavigationRequest = null;
     let pendingNavigationTimer = null;
+    // The PIN is collected on this client only and submitted as one packet.
+    let entry = '';
+    let entryTimer = null;
 
     // Symcon supplies the content margins relative to the complete tile.
     // The title and its controls occupy the top margin.
@@ -157,26 +161,46 @@
     }
     applyContentBounds();
 
+    function resetEntry() {
+        entry = '';
+        if (entryTimer !== null) clearTimeout(entryTimer);
+        entryTimer = null;
+    }
+
+    function finishEntry() {
+        resetEntry();
+        scrambleDigits();
+        renderMessage();
+    }
+
     document.querySelectorAll('.key-digit').forEach((button) => {
         button.addEventListener('click', () => {
-            tileState.InputActive = true;
-            tileState.Message = 'INPUT_ACTIVE';
+            if (tileState.Locked || entry.length >= Number(tileState.MaximumPatternLength)) return;
+            entry += button.dataset.digit;
+            if (entryTimer !== null) clearTimeout(entryTimer);
+            entryTimer = setTimeout(finishEntry, Math.max(5, Number(tileState.InputTimeout)) * 1000);
             renderMessage();
-            requestAction('Digit', Number(button.dataset.digit));
         });
     });
-    document.getElementById('clear').addEventListener('click', () => requestAction('Clear', true));
+    document.getElementById('clear').addEventListener('click', finishEntry);
     function beginClientRequest() {
         pendingNavigationRequest = createRequestID();
         if (pendingNavigationTimer !== null) clearTimeout(pendingNavigationTimer);
         pendingNavigationTimer = setTimeout(() => {
             pendingNavigationRequest = null;
             pendingNavigationTimer = null;
-        }, 10000);
+        }, 30000);
         return pendingNavigationRequest;
     }
+    function submitCode(code) {
+        requestAction('Submit', JSON.stringify({Code: code, RequestID: beginClientRequest()}));
+    }
     document.getElementById('enter').addEventListener('click', () => {
-        requestAction('Enter', beginClientRequest());
+        // An empty ENTER is ignored and never counts as a failed attempt.
+        if (entry === '' || tileState.Locked) return;
+        const code = entry;
+        finishEntry();
+        submitCode(code);
     });
 
     function handleMessage(data) {
@@ -185,21 +209,20 @@
             handleNavigation(update.Navigation);
             return;
         }
-        const wasInputActive = tileState.InputActive;
         const wasPatternMode = isPatternMode();
         tileState = Object.assign(tileState, update, {receivedAt: Date.now()});
         refreshRequested = false;
-        if (tileState.Locked || wasPatternMode !== isPatternMode()) cancelPattern();
+        if (tileState.Locked || wasPatternMode !== isPatternMode()) {
+            cancelPattern();
+            resetEntry();
+        }
         document.querySelector('.keypad').hidden = isPatternMode();
         patternPad.toggleAttribute('hidden', !isPatternMode());
         patternPad.setAttribute('aria-disabled', String(Boolean(tileState.Locked)));
         renderMessage();
         document.querySelectorAll('.key').forEach((button) => button.disabled = Boolean(tileState.Locked));
         configureScrambleTimer();
-        if (tileState.Scramble && !tileState.InputActive &&
-            (wasInputActive || !document.body.dataset.initialized)) {
-            scrambleDigits();
-        }
+        if (!document.body.dataset.initialized) scrambleDigits();
         document.body.dataset.initialized = 'true';
     }
 
@@ -224,21 +247,32 @@
     }
 
     function renderMessage() {
-        let text = messageTexts[tileState.Message] || tileState.Message || '';
+        const message = entry !== '' ? 'INPUT_ACTIVE' : tileState.Message;
+        let text = messageTexts[message] || message || '';
         if (isPatternMode()) {
-            if (tileState.Message === 'READY') text = 'Draw pattern';
-            if (tileState.Message === 'INPUT_ACTIVE') text = 'Pattern entry in progress';
-            if (tileState.Message === 'PIN_INVALID') text = 'Pattern invalid';
+            if (message === 'READY') text = 'Draw pattern';
+            if (message === 'INPUT_ACTIVE') text = 'Pattern entry in progress';
+            if (message === 'PIN_INVALID') text = 'Pattern invalid';
         }
         document.getElementById('module-message').innerText = localize(text);
     }
 
+    // Unbiased random index from the platform CSPRNG.
+    function randomIndex(limit) {
+        const range = Math.floor(0x100000000 / limit) * limit;
+        const value = new Uint32Array(1);
+        do {
+            crypto.getRandomValues(value);
+        } while (value[0] >= range);
+        return value[0] % limit;
+    }
+
     function scrambleDigits() {
-        if (!tileState.Scramble || tileState.InputActive || isPatternMode()) return;
+        if (!tileState.Scramble || entry !== '' || isPatternMode()) return;
         const buttons = Array.from(document.querySelectorAll('.key-digit'));
         const digits = buttons.map((button) => button.dataset.digit);
         for (let i = digits.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
+            const j = randomIndex(i + 1);
             [digits[i], digits[j]] = [digits[j], digits[i]];
         }
         buttons.forEach((button, index) => {
@@ -251,9 +285,7 @@
         if (scrambleTimer !== null) clearInterval(scrambleTimer);
         scrambleTimer = null;
         if (!isPatternMode() && tileState.Scramble && tileState.ScrambleInterval > 0) {
-            scrambleTimer = setInterval(() => {
-                if (!tileState.InputActive) scrambleDigits();
-            }, tileState.ScrambleInterval * 1000);
+            scrambleTimer = setInterval(scrambleDigits, tileState.ScrambleInterval * 1000);
         }
     }
 
@@ -421,10 +453,12 @@
         if (!cancelled) samplePattern(patternPosition(event));
         // Retain no raw coordinates or point sequence after submission/cancellation.
         const pattern = patternOverflow ? '0' : patternSequence.join('');
+        // A tap or a single point is not a pattern and never counts as a failed attempt.
+        const complete = patternOverflow || patternSequence.length >= Number(tileState.MinimumPatternLength);
         cancelPattern();
         renderMessage();
-        if (cancelled || pattern === '' || tileState.Locked || !isPatternMode()) return;
-        requestAction('Pattern', JSON.stringify({Pattern: pattern, RequestID: beginClientRequest()}));
+        if (cancelled || !complete || tileState.Locked || !isPatternMode()) return;
+        submitCode(pattern);
     }
     // Capture phase also receives pointerup if the pad has just lost pointer capture.
     window.addEventListener('pointerup', event => finishPattern(event, false), true);

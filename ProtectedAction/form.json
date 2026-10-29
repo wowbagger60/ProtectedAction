@@ -13,8 +13,7 @@
                     "caption": "Pattern",
                     "value": 1
                 }
-            ],
-            "onChange": "IPS_RequestAction($id, \"InputModePreview\", $InputMode);"
+            ]
         },
         {
             "type": "CheckBox",
@@ -83,7 +82,7 @@
         {
             "type": "CheckBox",
             "name": "ScrambleKeypad",
-            "caption": "Scramble digits"
+            "caption": "Scramble digits (in pattern mode for Super PIN entry only)"
         },
         {
             "type": "NumberSpinner",
@@ -101,6 +100,11 @@
         }
     ],
     "status": [
+        {
+            "code": 203,
+            "icon": "error",
+            "caption": "Module code changed. Re-registration required"
+        },
         {
             "code": 202,
             "icon": "error",

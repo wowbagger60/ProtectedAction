@@ -39,7 +39,11 @@
             "Require re-registration after module code changes": "Bei Änderungen am Modulcode Neuregistrierung verlangen",
             "When code binding is disabled, registrations survive compatible module updates. Code binding remains enabled by default.": "Ohne Codebindung bleiben Registrierungen bei kompatiblen Modulupdates erhalten. Standardmässig ist die Codebindung eingeschaltet.",
             "Code binding is locked. Restore the registered setting or reset all registrations.": "Die Codebindung ist gesperrt. Ursprüngliche Einstellung wiederherstellen oder alle Registrierungen zurücksetzen.",
-            "Invalid configuration or locked registration options": "Ungültige Konfiguration oder gesperrte Registrierungseinstellungen"
+            "Invalid configuration or locked registration options": "Ungültige Konfiguration oder gesperrte Registrierungseinstellungen",
+            "Scramble digits (in pattern mode for Super PIN entry only)": "Ziffern mischen (im Mustermodus nur bei der Super-PIN-Eingabe)",
+            "Module code changed. Re-registration required": "Modulcode geändert. Neuregistrierung erforderlich",
+            "Module code changed. Reset the instance and register all actions and the Super PIN again.": "Der Modulcode wurde geändert. Instanz zurücksetzen und alle Aktionen sowie den Super-PIN neu registrieren.",
+            "Re-registration required": "Neuregistrierung erforderlich"
         }
     }
 }

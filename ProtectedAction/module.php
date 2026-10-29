@@ -4,22 +4,33 @@ declare(strict_types=1);
 
 class ProtectedAction extends IPSModuleStrict
 {
-    private const FORMAT_VERSION = 6;
+    // Records written up to version 1.1. They remain readable and are migrated on first use.
+    private const LEGACY_RECORD_FORMAT = 6;
+    private const RECORD_FORMAT = 7;
+    // The decrypted payload format is independent of the record format.
+    private const PAYLOAD_FORMAT = 6;
     // Keep these values and their semantics stable across compatible module updates.
     private const KDF_VERSION = 1;
     private const KDF_OPSLIMIT = 2;
     private const KDF_MEMLIMIT = 67108864; // 64 MiB; part of KDF version 1
+    private const KDF_CONTEXT = 'PRACTkey'; // Exactly 8 bytes for sodium_crypto_kdf_derive_from_key()
+    private const SUBKEY_LOOKUP = 1;
+    private const SUBKEY_ENCRYPTION = 2;
     private const MIN_PIN_LENGTH = 4;
     private const MIN_PATTERN_LENGTH = 2;
     private const MAX_CODE_LENGTH = 16;
     private const MODULE_ID = '{84C928B5-BB9D-4E25-8FC4-574B1F2B945E}';
+    // Semaphore timeouts in milliseconds. Entries do not queue: a concurrent entry is dropped.
+    private const WAIT_ENTRY = 250;
+    private const WAIT_INPUT = 5000;
+    private const WAIT_ADMIN = 60000;
     private const INPUT_BUFFER = 'Input';
     private const INPUT_TIME_BUFFER = 'InputTime';
     private const MESSAGE_BUFFER = 'Message';
     private const MESSAGE_CODES = [
         'READY', 'INPUT_ACTIVE', 'PIN_INVALID', 'ACTION_EXECUTED', 'ACTION_FAILED',
         'TEMPORARILY_LOCKED', 'PERMANENTLY_LOCKED', 'RECOVERY_ACTIVE',
-        'SUPER_PIN_INVALID', 'UNLOCKED', 'VISUALIZATION_REQUIRED'
+        'SUPER_PIN_INVALID', 'UNLOCKED', 'VISUALIZATION_REQUIRED', 'REREGISTRATION_REQUIRED'
     ];
 
     public function Create(): void
@@ -42,6 +53,8 @@ class ProtectedAction extends IPSModuleStrict
         $this->RegisterAttributeInteger('RegisteredCodeBinding', -1);
         $this->RegisterAttributeString('Actions', '[]');
         $this->RegisterAttributeString('Recovery', '');
+        $this->RegisterAttributeString('KeySalt', '');
+        $this->RegisterAttributeString('CodeFingerprint', '');
         $this->RegisterAttributeInteger('FailedAttempts', 0);
         $this->RegisterAttributeInteger('LockUntil', 0);
         $this->RegisterAttributeBoolean('PermanentlyLocked', false);
@@ -91,7 +104,7 @@ class ProtectedAction extends IPSModuleStrict
             $this->WriteAttributeInteger('LockUntil', 0);
             $this->SetTimerInterval('LockTimer', 0);
         }
-        $this->SetStatus(102);
+        $this->SetStatus($this->ReregistrationRequired() ? 203 : 102);
         $this->UpdateSummary();
         $this->PublishStatus();
         $this->ReloadForm();
@@ -100,19 +113,14 @@ class ProtectedAction extends IPSModuleStrict
     public function GetConfigurationForm(): string
     {
         $form = json_decode(file_get_contents(__DIR__ . '/form.json'), true, 512, JSON_THROW_ON_ERROR);
-        $mode = $this->ReadPropertyInteger('InputMode');
         foreach ($form['elements'] as &$element) {
             switch ($element['name'] ?? '') {
                 case 'InputMode':
                 case 'BindToModuleCode':
                     $element['enabled'] = !$this->ModeIsLocked();
                     break;
-                case 'ScrambleKeypad':
-                case 'ScrambleInterval':
-                    $element['visible'] = $mode === 0;
-                    break;
                 case 'ConfigurationError':
-                    $element['caption'] = $this->ConfigurationError();
+                    $element['caption'] = $this->StateError();
                     $element['visible'] = $element['caption'] !== '';
                     break;
             }
@@ -124,15 +132,9 @@ class ProtectedAction extends IPSModuleStrict
     public function RequestAction(string $Ident, mixed $Value): void
     {
         switch ($Ident) {
-            case 'InputModePreview':
-                if (!$this->ModeIsLocked()) {
-                    $pattern = (int) $Value === 1;
-                    $this->UpdateFormField('ScrambleKeypad', 'visible', !$pattern);
-                    $this->UpdateFormField('ScrambleInterval', 'visible', !$pattern);
-                }
-                break;
-            case 'Pattern':
-                $this->ProcessPattern($Value);
+            case 'Submit':
+            case 'Pattern': // Sent by tiles loaded before version 1.2
+                $this->Synchronized(self::WAIT_ENTRY, fn (): bool => $this->ProcessSubmission($Value), false);
                 break;
             case 'Digit':
                 $this->InputDigit((int) $Value);
@@ -141,14 +143,14 @@ class ProtectedAction extends IPSModuleStrict
                 $this->Clear();
                 break;
             case 'Enter':
-                $requestID = is_string($Value) && preg_match('/^[A-Za-z0-9_-]{16,64}$/', $Value) === 1
-                    ? $Value
-                    : null;
-                $this->ProcessEntry($requestID);
+                $this->Enter();
                 break;
             case 'Refresh':
-                $this->ExpireInput();
-                $this->PublishStatus();
+                $this->Synchronized(self::WAIT_INPUT, function (): bool {
+                    $this->ExpireInput();
+                    $this->PublishStatus();
+                    return true;
+                }, false);
                 break;
             default:
                 throw new InvalidArgumentException('Unknown action: ' . $Ident);
@@ -169,8 +171,228 @@ class ProtectedAction extends IPSModuleStrict
 
     public function RegisterAction(string $PIN, int $ObjectID, array $Parameters = []): bool
     {
+        return $this->Synchronized(
+            self::WAIT_ADMIN,
+            fn (): bool => $this->StoreAction($PIN, $ObjectID, $Parameters),
+            false
+        );
+    }
+
+    public function Unregister(string $PIN): bool
+    {
+        return $this->Synchronized(self::WAIT_ADMIN, fn (): bool => $this->RemoveAction($PIN), false);
+    }
+
+    public function RegisterSuperPIN(string $PIN): bool
+    {
+        return $this->Synchronized(self::WAIT_ADMIN, function () use ($PIN): bool {
+            if (!$this->CryptoAvailable() || $this->ConfigurationError() !== '' ||
+                $this->ReregistrationRequired() || !$this->ValidPIN($PIN)) {
+                return false;
+            }
+            $payload = json_encode(['format' => self::PAYLOAD_FORMAT, 'purpose' => 'recovery'], JSON_THROW_ON_ERROR);
+            $this->StoreRecovery($PIN, $payload);
+            sodium_memzero($PIN);
+            $this->StoreCodeFingerprint();
+            $this->LockRegistrationOptions();
+            $this->PublishStatus();
+            return true;
+        }, false);
+    }
+
+    public function InputDigit(int $Digit): bool
+    {
+        return $this->Synchronized(self::WAIT_INPUT, function () use ($Digit): bool {
+            $this->ExpireInput();
+            if ($Digit < 0 || $Digit > 9 || !$this->InputAllowed()) {
+                return false;
+            }
+            $input = $this->GetBuffer(self::INPUT_BUFFER);
+            $recovery = $this->ReadAttributeBoolean('RecoveryMode');
+            if (!$recovery && $this->ReadPropertyInteger('InputMode') === 1 &&
+                ($Digit === 0 || str_ends_with($input, (string) $Digit))) {
+                return false;
+            }
+            if (strlen($input) >= self::MAX_CODE_LENGTH) {
+                return false;
+            }
+            $this->ClearTransientMessage();
+            $this->SetBuffer(self::INPUT_BUFFER, $input . (string) $Digit);
+            $this->SetBuffer(self::INPUT_TIME_BUFFER, (string) time());
+            $this->SetTimerInterval('InputTimer', $this->ReadPropertyInteger('InputTimeout') * 1000);
+            $this->PublishStatus();
+            return true;
+        }, false);
+    }
+
+    public function Clear(): void
+    {
+        $this->Synchronized(self::WAIT_INPUT, function (): bool {
+            $this->ClearInput();
+            $this->ClearTransientMessage();
+            $this->PublishStatus();
+            return true;
+        }, false);
+    }
+
+    public function Enter(): bool
+    {
+        return $this->Synchronized(self::WAIT_ENTRY, function (): bool {
+            $this->ExpireInput();
+            $code = $this->GetBuffer(self::INPUT_BUFFER);
+            $this->ClearInput();
+            // Code entered through the API buffer cannot be assigned to a visualization client.
+            return $this->ProcessEntry($code, null);
+        }, false);
+    }
+
+    public function Unlock(string $SuperPIN): bool
+    {
+        return $this->Synchronized(self::WAIT_ADMIN, function () use ($SuperPIN): bool {
+            if (!$this->CryptoAvailable() || $this->ConfigurationError() !== '' ||
+                $this->ReregistrationRequired() ||
+                !$this->ReadAttributeBoolean('PermanentlyLocked') ||
+                $this->ReadAttributeString('Recovery') === '') {
+                return false;
+            }
+            // Do not call BeginRecovery(): it explicitly starts a new attempt budget.
+            // API calls share the current budget with the interactive recovery flow.
+            if ($this->ReadAttributeInteger('RecoveryFailedAttempts') >=
+                $this->ReadPropertyInteger('RecoveryAttempts')) {
+                sodium_memzero($SuperPIN);
+                return false;
+            }
+            $this->ClearInput();
+            if (!$this->ValidPIN($SuperPIN)) {
+                sodium_memzero($SuperPIN);
+                return $this->RejectRecovery();
+            }
+            return $this->TryRecovery($SuperPIN);
+        }, false);
+    }
+
+    public function BeginRecovery(): bool
+    {
+        return $this->Synchronized(self::WAIT_INPUT, function (): bool {
+            if (!$this->ReadAttributeBoolean('PermanentlyLocked') ||
+                $this->ReadAttributeString('Recovery') === '' || $this->ReregistrationRequired()) {
+                return false;
+            }
+            $this->WriteAttributeBoolean('RecoveryMode', true);
+            $this->WriteAttributeInteger('RecoveryFailedAttempts', 0);
+            $this->ClearInput();
+            $this->ClearTransientMessage();
+            $this->UpdateSummary();
+            $this->PublishStatus();
+            return true;
+        }, false);
+    }
+
+    public function CancelRecovery(): void
+    {
+        $this->Synchronized(self::WAIT_INPUT, function (): bool {
+            $this->WriteAttributeBoolean('RecoveryMode', false);
+            $this->ClearInput();
+            $this->ClearTransientMessage();
+            $this->UpdateSummary();
+            $this->PublishStatus();
+            return true;
+        }, false);
+    }
+
+    public function Reset(): void
+    {
+        $this->Synchronized(self::WAIT_ADMIN, function (): bool {
+            $this->WriteAttributeString('Actions', '[]');
+            $this->WriteAttributeString('Recovery', '');
+            $this->WriteAttributeString('KeySalt', '');
+            $this->WriteAttributeString('CodeFingerprint', '');
+            $this->WriteAttributeInteger('RegisteredInputMode', -1);
+            $this->WriteAttributeInteger('RegisteredCodeBinding', -1);
+            $this->WriteAttributeInteger('FailedAttempts', 0);
+            $this->WriteAttributeInteger('LockUntil', 0);
+            $this->WriteAttributeBoolean('PermanentlyLocked', false);
+            $this->WriteAttributeBoolean('RecoveryMode', false);
+            $this->WriteAttributeInteger('RecoveryFailedAttempts', 0);
+            $this->SetTimerInterval('LockTimer', 0);
+            $this->ClearInput();
+            $this->ClearTransientMessage();
+            $this->UpdateSummary();
+            $this->PublishStatus();
+            if ($this->CryptoAvailable() && $this->ConfigurationError() === '') {
+                $this->SetStatus(102);
+            }
+            $this->ReloadForm();
+            return true;
+        }, false);
+    }
+
+    public function GetState(): string
+    {
+        return json_encode(array_merge($this->GetStatusData(), [
+            'RegisteredActions'      => count($this->ReadActions()),
+            'FailedAttempts'         => $this->ReadAttributeInteger('FailedAttempts'),
+            'RecoveryDefined'        => $this->ReadAttributeString('Recovery') !== '',
+            'InputMode'              => $this->ReadPropertyInteger('InputMode'),
+            'InputModeLocked'        => $this->ModeIsLocked(),
+            'CodeBound'              => $this->ReadPropertyBoolean('BindToModuleCode'),
+            'CodeBindingLocked'      => $this->ModeIsLocked(),
+            'ReregistrationRequired' => $this->ReregistrationRequired()
+        ]), JSON_THROW_ON_ERROR);
+    }
+
+    public function InternalTimer(string $Timer): void
+    {
+        $timers = ['Message' => 'MessageTimer', 'Input' => 'InputTimer', 'Lock' => 'LockTimer'];
+        if (!isset($timers[$Timer])) {
+            return;
+        }
+        $handled = $this->Synchronized(self::WAIT_INPUT, function () use ($Timer): bool {
+            switch ($Timer) {
+                case 'Message':
+                    $this->ClearTransientMessage();
+                    break;
+                case 'Input':
+                    $this->ClearInput();
+                    break;
+                case 'Lock':
+                    // A failure handled just before this timer fired may have extended the lock.
+                    $remaining = $this->ReadAttributeInteger('LockUntil') - time();
+                    if ($remaining > 0) {
+                        $this->SetTimerInterval('LockTimer', $remaining * 1000);
+                        return true;
+                    }
+                    $this->WriteAttributeInteger('LockUntil', 0);
+                    $this->SetTimerInterval('LockTimer', 0);
+                    $this->UpdateSummary();
+                    break;
+            }
+            $this->PublishStatus();
+            return true;
+        }, false);
+        if (!$handled) {
+            // Busy with an entry or registration; try again shortly.
+            $this->SetTimerInterval($timers[$Timer], 1000);
+        }
+    }
+
+    private function Synchronized(int $Timeout, callable $Callback, mixed $Busy): mixed
+    {
+        $name = 'ProtectedAction_' . $this->InstanceID;
+        if (!IPS_SemaphoreEnter($name, $Timeout)) {
+            return $Busy;
+        }
+        try {
+            return $Callback();
+        } finally {
+            IPS_SemaphoreLeave($name);
+        }
+    }
+
+    private function StoreAction(string $PIN, int $ObjectID, array $Parameters): bool
+    {
         $normalized = $this->NormalizeAccessCode($PIN, false);
-        if (!$this->CryptoAvailable() || $this->ConfigurationError() !== '' ||
+        if (!$this->CryptoAvailable() || $this->ConfigurationError() !== '' || $this->ReregistrationRequired() ||
             $normalized === null || !IPS_ObjectExists($ObjectID)) {
             return false;
         }
@@ -186,7 +408,7 @@ class ProtectedAction extends IPSModuleStrict
                     return false;
                 }
                 $action = [
-                    'format'     => self::FORMAT_VERSION,
+                    'format'     => self::PAYLOAD_FORMAT,
                     'type'       => 'ScriptText',
                     'script'     => $scriptText,
                     'parameters' => $Parameters
@@ -197,7 +419,7 @@ class ProtectedAction extends IPSModuleStrict
                     return false;
                 }
                 $action = [
-                    'format'   => self::FORMAT_VERSION,
+                    'format'   => self::PAYLOAD_FORMAT,
                     'type'     => 'VisualizationTarget',
                     'objectID' => $ObjectID
                 ];
@@ -220,276 +442,133 @@ class ProtectedAction extends IPSModuleStrict
             return false;
         }
 
+        $this->EnsureKeySalt();
+        $keys = $this->ActionKeys($PIN);
         $actions = $this->ReadActions();
-        $recordID = $this->FindActionByPIN($PIN, $actions) ?? bin2hex(random_bytes(16));
-        $actions[$recordID] = $this->Encrypt($PIN, $payload, 'action:' . $recordID);
+        // Replace a record that an earlier version stored for the same code.
+        $legacy = $this->FindLegacyAction($PIN, $actions);
+        sodium_memzero($PIN);
+        if ($keys === null) {
+            sodium_memzero($payload);
+            return false;
+        }
+        if ($legacy !== null) {
+            sodium_memzero($legacy['plainText']);
+            unset($actions[$legacy['recordID']]);
+        }
+        $actions[$keys['recordID']] = $this->EncryptRecord(
+            $keys['key'], $payload, 'action:' . $keys['recordID']
+        );
+        sodium_memzero($keys['key']);
         sodium_memzero($payload);
         ksort($actions, SORT_STRING);
         $this->WriteActions($actions);
+        $this->StoreCodeFingerprint();
         $this->LockRegistrationOptions();
-        sodium_memzero($PIN);
         $this->UpdateSummary();
         $this->PublishStatus();
         return true;
     }
 
-    public function Unregister(string $PIN): bool
+    private function RemoveAction(string $PIN): bool
     {
         $normalized = $this->NormalizeAccessCode($PIN, false);
-        if ($this->ConfigurationError() !== '' || $normalized === null) {
+        if (!$this->CryptoAvailable() || $this->ConfigurationError() !== '' || $this->ReregistrationRequired() ||
+            $normalized === null) {
             return false;
         }
         sodium_memzero($PIN);
-        $PIN = $normalized;
-        sodium_memzero($normalized);
         $actions = $this->ReadActions();
-        $recordID = $this->FindActionByPIN($PIN, $actions);
-        sodium_memzero($PIN);
-        if ($recordID === null) {
+        $match = $this->FindAction($normalized, $actions);
+        sodium_memzero($normalized);
+        if ($match === null) {
             return false;
         }
-        unset($actions[$recordID]);
+        sodium_memzero($match['plainText']);
+        unset($actions[$match['recordID']]);
         $this->WriteActions($actions);
         $this->UpdateSummary();
         $this->PublishStatus();
         return true;
     }
 
-    public function RegisterSuperPIN(string $PIN): bool
-    {
-        if (!$this->CryptoAvailable() || $this->ConfigurationError() !== '' || !$this->ValidPIN($PIN)) {
-            return false;
-        }
-        $payload = json_encode(['format' => self::FORMAT_VERSION, 'purpose' => 'recovery'], JSON_THROW_ON_ERROR);
-        $this->WriteAttributeString('Recovery', json_encode(
-            $this->Encrypt($PIN, $payload, 'recovery'),
-            JSON_THROW_ON_ERROR
-        ));
-        sodium_memzero($PIN);
-        $this->LockRegistrationOptions();
-        $this->PublishStatus();
-        return true;
-    }
-
-    public function InputDigit(int $Digit): bool
-    {
-        $this->ExpireInput();
-        if ($Digit < 0 || $Digit > 9 || !$this->InputAllowed()) {
-            return false;
-        }
-        $input = $this->GetBuffer(self::INPUT_BUFFER);
-        $recovery = $this->ReadAttributeBoolean('RecoveryMode');
-        if (!$recovery && $this->ReadPropertyInteger('InputMode') === 1 &&
-            ($Digit === 0 || str_ends_with($input, (string) $Digit))) {
-            return false;
-        }
-        $maximum = self::MAX_CODE_LENGTH;
-        if (strlen($input) >= $maximum) {
-            return false;
-        }
-        $this->ClearTransientMessage();
-        $this->SetBuffer(self::INPUT_BUFFER, $input . (string) $Digit);
-        $this->SetBuffer(self::INPUT_TIME_BUFFER, (string) time());
-        $this->SetTimerInterval('InputTimer', $this->ReadPropertyInteger('InputTimeout') * 1000);
-        $this->PublishStatus();
-        return true;
-    }
-
-    public function Clear(): void
-    {
-        $this->ClearInput();
-        $this->ClearTransientMessage();
-        $this->PublishStatus();
-    }
-
-    public function Enter(): bool
-    {
-        return $this->ProcessEntry(null);
-    }
-
-    private function ProcessEntry(?string $RequestID): bool
+    private function ProcessSubmission(mixed $Value): bool
     {
         if (!$this->InputAllowed()) {
-            $this->ClearInput();
-            $this->PublishStatus();
             return false;
         }
-        $this->ExpireInput();
-        $pin = $this->GetBuffer(self::INPUT_BUFFER);
-        $this->ClearInput();
-        $recovery = $this->ReadAttributeBoolean('RecoveryMode');
-        $normalized = $this->NormalizeAccessCode($pin, $recovery);
-        if ($normalized === null) {
-            sodium_memzero($pin);
-            return $recovery ? $this->TryRecovery('') : $this->HandleFailure();
-        }
-        sodium_memzero($pin);
-        $pin = $normalized;
-        sodium_memzero($normalized);
-        if ($recovery) {
-            return $this->TryRecovery($pin);
-        }
-
-        foreach ($this->ReadActions() as $recordID => $record) {
-            $plainText = $this->Decrypt($pin, $record, 'action:' . $recordID);
-            if ($plainText === null) {
-                continue;
-            }
-            $this->WriteAttributeInteger('FailedAttempts', 0);
-            $this->WriteAttributeInteger('LockUntil', 0);
-            $this->SetTimerInterval('LockTimer', 0);
-            sodium_memzero($pin);
-            $result = $this->ExecutePayload($plainText, $RequestID);
-            sodium_memzero($plainText);
-            $this->SetTransientMessage($result['message']);
-            $this->UpdateSummary();
-            $this->PublishStatus();
-            if ($result['target'] !== null && $RequestID !== null) {
-                $this->PublishNavigation($result['target'], $RequestID);
-            }
-            return $result['success'];
-        }
-        sodium_memzero($pin);
-        return $this->HandleFailure();
-    }
-
-    private function ProcessPattern(mixed $Value): bool
-    {
-        if ($this->ReadPropertyInteger('InputMode') !== 1 ||
-            $this->ReadAttributeBoolean('RecoveryMode') || !$this->InputAllowed()) {
-            return false;
-        }
-        $this->ClearInput();
-        // Bounded, complete transport packet. No point sequence is published to clients or logs.
+        // Bounded, complete transport packet. The code is never published to clients or logs.
         if (!is_string($Value) || strlen($Value) > 1024) {
-            return $this->HandleFailure();
+            return $this->RejectInput();
         }
         try {
             $packet = json_decode($Value, true, 8, JSON_THROW_ON_ERROR);
         } catch (JsonException $e) {
-            return $this->HandleFailure();
+            return $this->RejectInput();
         }
-        if (!is_array($packet) || !is_string($packet['Pattern'] ?? null)) {
-            return $this->HandleFailure();
-        }
-        $pattern = $packet['Pattern'];
-        if ($this->NormalizeAccessCode($pattern, false) === null) {
-            sodium_memzero($pattern);
-            return $this->HandleFailure();
+        $code = is_array($packet) ? ($packet['Code'] ?? $packet['Pattern'] ?? null) : null;
+        if (!is_string($code)) {
+            return $this->RejectInput();
         }
         $requestID = is_string($packet['RequestID'] ?? null) &&
             preg_match('/^[A-Za-z0-9_-]{16,64}$/', $packet['RequestID']) === 1
             ? $packet['RequestID'] : null;
-        $this->SetBuffer(self::INPUT_BUFFER, $pattern);
-        $this->SetBuffer(self::INPUT_TIME_BUFFER, (string) time());
-        sodium_memzero($pattern);
-        return $this->ProcessEntry($requestID);
+        return $this->ProcessEntry($code, $requestID);
     }
 
-    public function Unlock(string $SuperPIN): bool
+    private function ProcessEntry(string $Code, ?string $RequestID): bool
     {
-        if (!$this->CryptoAvailable() || $this->ConfigurationError() !== '' ||
-            !$this->ReadAttributeBoolean('PermanentlyLocked') ||
-            $this->ReadAttributeString('Recovery') === '') {
+        if (!$this->InputAllowed()) {
+            $this->PublishStatus();
             return false;
         }
-        // Do not call BeginRecovery(): it explicitly starts a new attempt budget.
-        // API calls share the current budget with the interactive recovery flow.
-        if ($this->ReadAttributeInteger('RecoveryFailedAttempts') >=
-            $this->ReadPropertyInteger('RecoveryAttempts')) {
-            sodium_memzero($SuperPIN);
+        // An empty submission, e.g. a stray ENTER, is not an attempt.
+        if ($Code === '') {
+            $this->PublishStatus();
             return false;
         }
-        $this->ClearInput();
-        if (!$this->ValidPIN($SuperPIN)) {
-            sodium_memzero($SuperPIN);
-            return $this->TryRecovery('');
+        $recovery = $this->ReadAttributeBoolean('RecoveryMode');
+        $normalized = $this->NormalizeAccessCode($Code, $recovery);
+        sodium_memzero($Code);
+        if ($normalized === null) {
+            return $this->RejectInput();
         }
-        return $this->TryRecovery($SuperPIN);
-    }
-
-    public function BeginRecovery(): bool
-    {
-        if (!$this->ReadAttributeBoolean('PermanentlyLocked') || $this->ReadAttributeString('Recovery') === '') {
-            return false;
+        if ($recovery) {
+            return $this->TryRecovery($normalized);
         }
-        $this->WriteAttributeBoolean('RecoveryMode', true);
-        $this->WriteAttributeInteger('RecoveryFailedAttempts', 0);
-        $this->ClearInput();
-        $this->ClearTransientMessage();
-        $this->UpdateSummary();
-        $this->PublishStatus();
-        return true;
-    }
 
-    public function CancelRecovery(): void
-    {
-        $this->WriteAttributeBoolean('RecoveryMode', false);
-        $this->ClearInput();
-        $this->ClearTransientMessage();
-        $this->UpdateSummary();
-        $this->PublishStatus();
-    }
-
-    public function Reset(): void
-    {
-        $this->WriteAttributeString('Actions', '[]');
-        $this->WriteAttributeString('Recovery', '');
-        $this->WriteAttributeInteger('RegisteredInputMode', -1);
-        $this->WriteAttributeInteger('RegisteredCodeBinding', -1);
+        // Count the attempt before the expensive check: an aborted check must not be free.
+        $attempts = $this->ReadAttributeInteger('FailedAttempts') + 1;
+        $this->WriteAttributeInteger('FailedAttempts', $attempts);
+        $match = $this->FindAction($normalized, $this->ReadActions());
+        if ($match === null) {
+            sodium_memzero($normalized);
+            return $this->ApplyFailure($attempts);
+        }
         $this->WriteAttributeInteger('FailedAttempts', 0);
         $this->WriteAttributeInteger('LockUntil', 0);
-        $this->WriteAttributeBoolean('PermanentlyLocked', false);
-        $this->WriteAttributeBoolean('RecoveryMode', false);
-        $this->WriteAttributeInteger('RecoveryFailedAttempts', 0);
         $this->SetTimerInterval('LockTimer', 0);
-        $this->ClearInput();
-        $this->ClearTransientMessage();
+        if ($match['legacy']) {
+            $this->MigrateAction($normalized, $match['recordID'], $match['plainText']);
+        }
+        sodium_memzero($normalized);
+        $result = $this->ExecutePayload($match['plainText'], $RequestID);
+        sodium_memzero($match['plainText']);
+        $this->SetTransientMessage($result['message']);
         $this->UpdateSummary();
         $this->PublishStatus();
-        if ($this->CryptoAvailable() && $this->ConfigurationError() === '') {
-            $this->SetStatus(102);
+        if ($result['target'] !== null && $RequestID !== null) {
+            $this->PublishNavigation($result['target'], $RequestID);
         }
-        $this->ReloadForm();
-    }
-
-    public function GetState(): string
-    {
-        return json_encode(array_merge($this->GetStatusData(), [
-            'RegisteredActions' => count($this->ReadActions()),
-            'FailedAttempts'    => $this->ReadAttributeInteger('FailedAttempts'),
-            'RecoveryDefined'   => $this->ReadAttributeString('Recovery') !== '',
-            'InputMode'         => $this->ReadPropertyInteger('InputMode'),
-            'InputModeLocked'   => $this->ModeIsLocked(),
-            'CodeBound'         => $this->ReadPropertyBoolean('BindToModuleCode'),
-            'CodeBindingLocked' => $this->ModeIsLocked()
-        ]), JSON_THROW_ON_ERROR);
-    }
-
-    public function InternalTimer(string $Timer): void
-    {
-        switch ($Timer) {
-            case 'Message':
-                $this->ClearTransientMessage();
-                break;
-            case 'Input':
-                $this->ClearInput();
-                break;
-            case 'Lock':
-                $this->WriteAttributeInteger('LockUntil', 0);
-                $this->SetTimerInterval('LockTimer', 0);
-                $this->UpdateSummary();
-                break;
-            default:
-                return;
-        }
-        $this->PublishStatus();
+        return $result['success'];
     }
 
     private function TryRecovery(string $PIN): bool
     {
-        $record = json_decode($this->ReadAttributeString('Recovery'), true);
-        $plainText = is_array($record) ? $this->Decrypt($PIN, $record, 'recovery') : null;
+        // Count the attempt before the expensive check: an aborted check must not be free.
+        $attempts = $this->ReadAttributeInteger('RecoveryFailedAttempts') + 1;
+        $this->WriteAttributeInteger('RecoveryFailedAttempts', $attempts);
+        $plainText = $this->DecryptRecovery($PIN);
         sodium_memzero($PIN);
         if ($plainText !== null) {
             try {
@@ -498,7 +577,7 @@ class ProtectedAction extends IPSModuleStrict
                 $payload = [];
             }
             sodium_memzero($plainText);
-            if (($payload['format'] ?? null) === self::FORMAT_VERSION && ($payload['purpose'] ?? null) === 'recovery') {
+            if (($payload['format'] ?? null) === self::PAYLOAD_FORMAT && ($payload['purpose'] ?? null) === 'recovery') {
                 $this->WriteAttributeInteger('FailedAttempts', 0);
                 $this->WriteAttributeInteger('LockUntil', 0);
                 $this->WriteAttributeBoolean('PermanentlyLocked', false);
@@ -510,10 +589,24 @@ class ProtectedAction extends IPSModuleStrict
                 return true;
             }
         }
+        return $this->ApplyRecoveryFailure($attempts);
+    }
 
+    private function RejectInput(): bool
+    {
+        return $this->ReadAttributeBoolean('RecoveryMode') ? $this->RejectRecovery() : $this->HandleFailure();
+    }
+
+    private function RejectRecovery(): bool
+    {
         $attempts = $this->ReadAttributeInteger('RecoveryFailedAttempts') + 1;
         $this->WriteAttributeInteger('RecoveryFailedAttempts', $attempts);
-        if ($attempts >= $this->ReadPropertyInteger('RecoveryAttempts')) {
+        return $this->ApplyRecoveryFailure($attempts);
+    }
+
+    private function ApplyRecoveryFailure(int $Attempts): bool
+    {
+        if ($Attempts >= $this->ReadPropertyInteger('RecoveryAttempts')) {
             $this->WriteAttributeBoolean('RecoveryMode', false);
             $this->ClearTransientMessage();
         } else {
@@ -528,13 +621,18 @@ class ProtectedAction extends IPSModuleStrict
     {
         $attempts = $this->ReadAttributeInteger('FailedAttempts') + 1;
         $this->WriteAttributeInteger('FailedAttempts', $attempts);
-        if ($attempts >= $this->ReadPropertyInteger('PermanentLockAfter')) {
+        return $this->ApplyFailure($attempts);
+    }
+
+    private function ApplyFailure(int $Attempts): bool
+    {
+        if ($Attempts >= $this->ReadPropertyInteger('PermanentLockAfter')) {
             $this->WriteAttributeBoolean('PermanentlyLocked', true);
             $this->WriteAttributeInteger('LockUntil', 0);
             $this->SetTimerInterval('LockTimer', 0);
             $this->ClearTransientMessage();
-        } elseif ($attempts >= $this->ReadPropertyInteger('DelayAfterFailures')) {
-            $factor = $attempts - $this->ReadPropertyInteger('DelayAfterFailures') + 1;
+        } elseif ($Attempts >= $this->ReadPropertyInteger('DelayAfterFailures')) {
+            $factor = $Attempts - $this->ReadPropertyInteger('DelayAfterFailures') + 1;
             $delay = $this->ReadPropertyInteger('BaseDelay') * $factor;
             $this->WriteAttributeInteger('LockUntil', time() + $delay);
             $this->SetTimerInterval('LockTimer', $delay * 1000);
@@ -554,7 +652,7 @@ class ProtectedAction extends IPSModuleStrict
         } catch (JsonException $e) {
             return ['success' => false, 'message' => 'ACTION_FAILED', 'target' => null];
         }
-        if (($payload['format'] ?? null) !== self::FORMAT_VERSION) {
+        if (($payload['format'] ?? null) !== self::PAYLOAD_FORMAT) {
             return ['success' => false, 'message' => 'ACTION_FAILED', 'target' => null];
         }
         if (($payload['type'] ?? null) === 'VisualizationTarget') {
@@ -582,43 +680,200 @@ class ProtectedAction extends IPSModuleStrict
         return ['success' => $executed, 'message' => $executed ? 'ACTION_EXECUTED' : 'ACTION_FAILED', 'target' => null];
     }
 
-    private function FindActionByPIN(string $PIN, array $Actions): ?string
+    // Returns ['recordID' => string, 'plainText' => string, 'legacy' => bool] or null.
+    private function FindAction(string $Code, array $Actions): ?array
+    {
+        if ($this->ReadAttributeString('KeySalt') !== '') {
+            $keys = $this->ActionKeys($Code);
+            if ($keys !== null) {
+                $record = $Actions[$keys['recordID']] ?? null;
+                $plainText = is_array($record)
+                    ? $this->DecryptRecord($keys['key'], $record, 'action:' . $keys['recordID'])
+                    : null;
+                sodium_memzero($keys['key']);
+                if ($plainText !== null) {
+                    return ['recordID' => $keys['recordID'], 'plainText' => $plainText, 'legacy' => false];
+                }
+            }
+        }
+        return $this->FindLegacyAction($Code, $Actions);
+    }
+
+    private function FindLegacyAction(string $Code, array $Actions): ?array
     {
         foreach ($Actions as $recordID => $record) {
-            if (!is_string($recordID) || !is_array($record)) {
+            if (!is_string($recordID) || !is_array($record) ||
+                ($record['format'] ?? null) !== self::LEGACY_RECORD_FORMAT) {
                 continue;
             }
-            $plainText = $this->Decrypt($PIN, $record, 'action:' . $recordID);
+            $plainText = $this->LegacyDecrypt($Code, $record, 'action:' . $recordID);
             if ($plainText !== null) {
-                sodium_memzero($plainText);
-                return $recordID;
+                return ['recordID' => $recordID, 'plainText' => $plainText, 'legacy' => true];
             }
         }
         return null;
     }
 
-    private function Encrypt(string $PIN, string $PlainText, string $Purpose): array
+    private function MigrateAction(string $Code, string $LegacyID, string $PlainText): void
     {
-        $salt = random_bytes(SODIUM_CRYPTO_PWHASH_SALTBYTES);
-        $nonce = random_bytes(SODIUM_CRYPTO_AEAD_XCHACHA20POLY1305_IETF_NPUBBYTES);
-        $key = $this->DeriveKey($PIN, $salt, $Purpose);
-        $cipherText = sodium_crypto_aead_xchacha20poly1305_ietf_encrypt(
-            $PlainText, $this->AssociatedData($Purpose), $nonce, $key
+        $this->EnsureKeySalt();
+        $keys = $this->ActionKeys($Code);
+        if ($keys === null) {
+            return;
+        }
+        $actions = $this->ReadActions();
+        unset($actions[$LegacyID]);
+        $actions[$keys['recordID']] = $this->EncryptRecord(
+            $keys['key'], $PlainText, 'action:' . $keys['recordID']
         );
+        sodium_memzero($keys['key']);
+        ksort($actions, SORT_STRING);
+        $this->WriteActions($actions);
+    }
+
+    private function StoreRecovery(string $PIN, string $Payload): void
+    {
+        $this->EnsureKeySalt();
+        $key = $this->RecoveryKey($PIN);
+        if ($key === null) {
+            return;
+        }
+        $this->WriteAttributeString('Recovery', json_encode(
+            $this->EncryptRecord($key, $Payload, 'recovery'),
+            JSON_THROW_ON_ERROR
+        ));
         sodium_memzero($key);
+    }
+
+    private function DecryptRecovery(string $PIN): ?string
+    {
+        $record = json_decode($this->ReadAttributeString('Recovery'), true);
+        if (!is_array($record)) {
+            return null;
+        }
+        if (($record['format'] ?? null) === self::RECORD_FORMAT) {
+            $key = $this->RecoveryKey($PIN);
+            if ($key === null) {
+                return null;
+            }
+            $plainText = $this->DecryptRecord($key, $record, 'recovery');
+            sodium_memzero($key);
+            return $plainText;
+        }
+        $plainText = $this->LegacyDecrypt($PIN, $record, 'recovery');
+        if ($plainText !== null) {
+            $this->StoreRecovery($PIN, $plainText);
+        }
+        return $plainText;
+    }
+
+    // One Argon2 derivation per entry. The lookup subkey addresses the record directly,
+    // so the cost of an entry does not grow with the number of registered actions.
+    private function ActionKeys(string $Code): ?array
+    {
+        $master = $this->MasterKey($Code, $this->ReadPropertyInteger('InputMode') === 1 ? 'pattern' : 'pin');
+        if ($master === null) {
+            return null;
+        }
+        $lookup = sodium_crypto_kdf_derive_from_key(32, self::SUBKEY_LOOKUP, self::KDF_CONTEXT, $master);
+        $key = sodium_crypto_kdf_derive_from_key(
+            SODIUM_CRYPTO_AEAD_XCHACHA20POLY1305_IETF_KEYBYTES, self::SUBKEY_ENCRYPTION, self::KDF_CONTEXT, $master
+        );
+        sodium_memzero($master);
+        $recordID = bin2hex(sodium_crypto_generichash('record', $lookup, 16));
+        sodium_memzero($lookup);
+        return ['recordID' => $recordID, 'key' => $key];
+    }
+
+    private function RecoveryKey(string $PIN): ?string
+    {
+        $master = $this->MasterKey($PIN, 'super-pin');
+        if ($master === null) {
+            return null;
+        }
+        $key = sodium_crypto_kdf_derive_from_key(
+            SODIUM_CRYPTO_AEAD_XCHACHA20POLY1305_IETF_KEYBYTES, self::SUBKEY_ENCRYPTION, self::KDF_CONTEXT, $master
+        );
+        sodium_memzero($master);
+        return $key;
+    }
+
+    private function MasterKey(string $Code, string $Kind): ?string
+    {
+        $salt = base64_decode($this->ReadAttributeString('KeySalt'), true);
+        if ($salt === false || strlen($salt) !== SODIUM_CRYPTO_PWHASH_SALTBYTES) {
+            return null;
+        }
+        // Update-resistant records deliberately exclude module contents, version, build,
+        // filename, instance ID and filesystem path. Format/KDF compatibility must remain stable.
+        $binding = $this->ReadPropertyBoolean('BindToModuleCode')
+            ? 'code-bound' . chr(0) . $this->CodeHash()
+            : 'update-independent';
+        $material = 'ProtectedAction-Key-' . self::RECORD_FORMAT . chr(0) . self::KDF_VERSION . chr(0) .
+            $Kind . chr(0) . $Code . chr(0) . $binding;
+        $key = sodium_crypto_pwhash(
+            SODIUM_CRYPTO_KDF_KEYBYTES,
+            $material,
+            $salt,
+            self::KDF_OPSLIMIT,
+            self::KDF_MEMLIMIT,
+            SODIUM_CRYPTO_PWHASH_ALG_ARGON2ID13
+        );
+        sodium_memzero($material);
+        return $key;
+    }
+
+    private function EnsureKeySalt(): void
+    {
+        if ($this->ReadAttributeString('KeySalt') === '') {
+            $this->WriteAttributeString('KeySalt', base64_encode(random_bytes(SODIUM_CRYPTO_PWHASH_SALTBYTES)));
+        }
+    }
+
+    private function EncryptRecord(string $Key, string $PlainText, string $Purpose): array
+    {
+        $nonce = random_bytes(SODIUM_CRYPTO_AEAD_XCHACHA20POLY1305_IETF_NPUBBYTES);
+        $cipherText = sodium_crypto_aead_xchacha20poly1305_ietf_encrypt(
+            $PlainText, $this->AssociatedData($Purpose), $nonce, $Key
+        );
         return [
-            'format' => self::FORMAT_VERSION,
-            'kdf' => self::KDF_VERSION,
+            'format' => self::RECORD_FORMAT,
             'codeBound' => $this->ReadPropertyBoolean('BindToModuleCode'),
-            'salt' => base64_encode($salt),
             'nonce' => base64_encode($nonce),
             'cipherText' => base64_encode($cipherText)
         ];
     }
 
-    private function Decrypt(string $PIN, array $Record, string $Purpose): ?string
+    private function DecryptRecord(string $Key, array $Record, string $Purpose): ?string
     {
-        if (($Record['format'] ?? null) !== self::FORMAT_VERSION ||
+        if (($Record['format'] ?? null) !== self::RECORD_FORMAT ||
+            ($Record['codeBound'] ?? null) !== $this->ReadPropertyBoolean('BindToModuleCode')) {
+            return null;
+        }
+        $nonce = base64_decode((string) ($Record['nonce'] ?? ''), true);
+        $cipherText = base64_decode((string) ($Record['cipherText'] ?? ''), true);
+        if ($nonce === false || strlen($nonce) !== SODIUM_CRYPTO_AEAD_XCHACHA20POLY1305_IETF_NPUBBYTES ||
+            $cipherText === false) {
+            return null;
+        }
+        $plainText = sodium_crypto_aead_xchacha20poly1305_ietf_decrypt(
+            $cipherText, $this->AssociatedData($Purpose), $nonce, $Key
+        );
+        return $plainText === false ? null : $plainText;
+    }
+
+    private function AssociatedData(string $Purpose): string
+    {
+        return self::MODULE_ID . chr(0) . self::RECORD_FORMAT . chr(0) .
+            self::KDF_VERSION . chr(0) . $Purpose . chr(0) .
+            (int) $this->ReadPropertyBoolean('BindToModuleCode');
+    }
+
+    // Reads records written up to version 1.1 (one Argon2 derivation per record).
+    // Must stay byte-compatible with that version; do not change.
+    private function LegacyDecrypt(string $PIN, array $Record, string $Purpose): ?string
+    {
+        if (($Record['format'] ?? null) !== self::LEGACY_RECORD_FORMAT ||
             ($Record['kdf'] ?? null) !== self::KDF_VERSION ||
             ($Record['codeBound'] ?? null) !== $this->ReadPropertyBoolean('BindToModuleCode')) {
             return null;
@@ -631,20 +886,8 @@ class ProtectedAction extends IPSModuleStrict
             $cipherText === false) {
             return null;
         }
-        $key = $this->DeriveKey($PIN, $salt, $Purpose);
-        $plainText = sodium_crypto_aead_xchacha20poly1305_ietf_decrypt(
-            $cipherText, $this->AssociatedData($Purpose), $nonce, $key
-        );
-        sodium_memzero($key);
-        return $plainText === false ? null : $plainText;
-    }
-
-    private function DeriveKey(string $PIN, string $Salt, string $Purpose): string
-    {
         $kind = $Purpose === 'recovery' ? 'super-pin' :
             ($this->ReadPropertyInteger('InputMode') === 1 ? 'pattern' : 'pin');
-        // Update-resistant records deliberately exclude module contents, version, build,
-        // filename, instance ID and filesystem path. Format/KDF compatibility must remain stable.
         $binding = $this->ReadPropertyBoolean('BindToModuleCode')
             ? 'code-bound' . chr(0) . $this->CodeHash()
             : 'update-independent';
@@ -653,13 +896,20 @@ class ProtectedAction extends IPSModuleStrict
         $key = sodium_crypto_pwhash(
             SODIUM_CRYPTO_AEAD_XCHACHA20POLY1305_IETF_KEYBYTES,
             $material,
-            $Salt,
+            $salt,
             self::KDF_OPSLIMIT,
             self::KDF_MEMLIMIT,
             SODIUM_CRYPTO_PWHASH_ALG_ARGON2ID13
         );
         sodium_memzero($material);
-        return $key;
+        $associatedData = self::MODULE_ID . chr(0) . self::LEGACY_RECORD_FORMAT . chr(0) .
+            self::KDF_VERSION . chr(0) . $Purpose . chr(0) .
+            (int) $this->ReadPropertyBoolean('BindToModuleCode');
+        $plainText = sodium_crypto_aead_xchacha20poly1305_ietf_decrypt(
+            $cipherText, $associatedData, $nonce, $key
+        );
+        sodium_memzero($key);
+        return $plainText === false ? null : $plainText;
     }
 
     private function CodeHash(): string
@@ -672,11 +922,27 @@ class ProtectedAction extends IPSModuleStrict
         return hash('sha256', $moduleHash . chr(0) . $tileHash);
     }
 
-    private function AssociatedData(string $Purpose): string
+    // Not secret: it only detects that code-bound records can no longer be decrypted.
+    private function CodeFingerprint(): string
     {
-        return self::MODULE_ID . chr(0) . self::FORMAT_VERSION . chr(0) .
-            self::KDF_VERSION . chr(0) . $Purpose . chr(0) .
-            (int) $this->ReadPropertyBoolean('BindToModuleCode');
+        return hash('sha256', 'ProtectedAction-CodeFingerprint' . chr(0) . $this->CodeHash());
+    }
+
+    private function StoreCodeFingerprint(): void
+    {
+        if ($this->ReadPropertyBoolean('BindToModuleCode')) {
+            $this->WriteAttributeString('CodeFingerprint', $this->CodeFingerprint());
+        }
+    }
+
+    private function ReregistrationRequired(): bool
+    {
+        if (!$this->ReadPropertyBoolean('BindToModuleCode') || !$this->HasRegistrations()) {
+            return false;
+        }
+        // Registrations from versions without a fingerprint were bound to different module code.
+        $fingerprint = $this->ReadAttributeString('CodeFingerprint');
+        return $fingerprint === '' || !hash_equals($fingerprint, $this->CodeFingerprint());
     }
 
     private function ValidPIN(string $PIN): bool
@@ -758,9 +1024,18 @@ class ProtectedAction extends IPSModuleStrict
         return '';
     }
 
+    private function StateError(): string
+    {
+        $error = $this->ConfigurationError();
+        if ($error === '' && $this->ReregistrationRequired()) {
+            $error = $this->Translate('Module code changed. Reset the instance and register all actions and the Super PIN again.');
+        }
+        return $error;
+    }
+
     private function InputAllowed(): bool
     {
-        if (!$this->CryptoAvailable() || $this->ConfigurationError() !== '') {
+        if (!$this->CryptoAvailable() || $this->ConfigurationError() !== '' || $this->ReregistrationRequired()) {
             return false;
         }
         if ($this->ReadAttributeBoolean('PermanentlyLocked')) {
@@ -825,12 +1100,15 @@ class ProtectedAction extends IPSModuleStrict
     private function CryptoAvailable(): bool
     {
         return function_exists('sodium_crypto_pwhash') &&
-            function_exists('sodium_crypto_aead_xchacha20poly1305_ietf_encrypt');
+            function_exists('sodium_crypto_aead_xchacha20poly1305_ietf_encrypt') &&
+            function_exists('sodium_crypto_kdf_derive_from_key');
     }
 
     private function UpdateSummary(): void
     {
-        if ($this->ReadAttributeBoolean('RecoveryMode')) {
+        if ($this->ReregistrationRequired()) {
+            $this->SetSummary($this->Translate('Re-registration required'));
+        } elseif ($this->ReadAttributeBoolean('RecoveryMode')) {
             $this->SetSummary($this->Translate('Recovery mode'));
         } elseif ($this->ReadAttributeBoolean('PermanentlyLocked')) {
             $this->SetSummary($this->Translate('Permanently locked'));
@@ -867,7 +1145,9 @@ class ProtectedAction extends IPSModuleStrict
         $permanentlyLocked = $this->ReadAttributeBoolean('PermanentlyLocked');
         $inputActive = $this->GetBuffer(self::INPUT_BUFFER) !== '';
         $transientMessage = $this->GetBuffer(self::MESSAGE_BUFFER);
-        if ($permanentlyLocked && !$recoveryMode) {
+        if ($this->ReregistrationRequired()) {
+            $message = 'REREGISTRATION_REQUIRED';
+        } elseif ($permanentlyLocked && !$recoveryMode) {
             $message = 'PERMANENTLY_LOCKED';
         } elseif (time() < $lockUntil) {
             $message = 'TEMPORARILY_LOCKED';
@@ -895,6 +1175,7 @@ class ProtectedAction extends IPSModuleStrict
     {
         return [
             'InputMode' => $this->ReadPropertyInteger('InputMode'),
+            'MinimumPatternLength' => self::MIN_PATTERN_LENGTH,
             'MaximumPatternLength' => self::MAX_CODE_LENGTH,
             'InputTimeout' => $this->ReadPropertyInteger('InputTimeout'),
             'Scramble' => $this->ReadPropertyBoolean('ScrambleKeypad'),
