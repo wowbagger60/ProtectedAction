@@ -17,7 +17,9 @@ Install ProtectedAction from the Module Store and create an instance. Choose and
 
 Create and test a normal Symcon script containing the desired action. For example, it could toggle the visualization's editing controls or switch on a light.
 
-Then use a separate registration script to assign that script to a PIN or pattern. In the examples below, `12345` is the ProtectedAction instance and `67890` is the tested action script. Replace these IDs with your own.
+Then assign that script to a PIN or pattern. The easiest way is the instance configuration: under **Register action**, enter the code twice, choose the script or navigation target, optionally enter script parameters as a JSON object such as `{"Scene": 2}`, and select **Register action**. The code is not stored in the configuration or in any script. **Super PIN** and **Reset** work the same way.
+
+Alternatively, use a separate registration script. In the examples below, `12345` is the ProtectedAction instance and `67890` is the tested action script. Replace these IDs with your own.
 
 #### Register an action with a PIN
 
@@ -59,6 +61,12 @@ Later changes to the original script do not affect the registered action. Regist
 
 The final argument, `[]`, is for script parameters. If your script needs parameters, supply an array here; the running script receives those values through `$_IPS`. Always pass `[]` when no parameters are needed.
 
+In addition, the running script always receives `$_IPS['SENDER'] = 'ProtectedAction'` and the ID of the ProtectedAction instance in `$_IPS['INSTANCE']` and `$_IPS['SELF']`. These keys take precedence over registered parameters of the same name.
+
+#### Show script output
+
+With **Show script output on the tile**, or `PRACT_RegisterActionEx()` with `$ShowOutput = true`, ProtectedAction waits for the script to finish and shows its output (for example from `echo`) on the tile for a few seconds. Output is limited to 200 characters and appears only on the client where the code was entered. Technically, it is transmitted to all connected clients like a navigation target. While such a script is running, the instance accepts no other input, so keep it short. Without this option, scripts run in the background as before.
+
 **After testing, also remove the PIN or pattern and sensitive parameters from the registration script.**
 
 ### 3. Alternatively, register a navigation target
@@ -85,7 +93,7 @@ var_dump(PRACT_RegisterSuperPIN(12345, '8073519264'));
 
 The Super PIN is always numeric, even in pattern mode. Choose a sufficiently long, separate code and keep it safe. Remove it from the registration script afterwards. Registration alone does not start recovery.
 
-The Super PIN must contain 4 to 16 digits.
+The Super PIN must contain 4 to 16 digits. **It can be registered only once.** Otherwise, anyone with access to the system could lift a permanent lock simply by defining a new Super PIN. If you forget the Super PIN, reset the instance with `PRACT_Reset()` and register all actions again.
 
 ## Operation
 
@@ -96,7 +104,7 @@ Use the ProtectedAction instance as a tile in the visualization. It displays a n
 - **PIN:** Tap or click the digits. **C** clears the current input; **E** submits it. Digit positions can optionally be shuffled.
 - **Pattern:** Touch with your finger or pen, or hold the left mouse button, and trace the registered point sequence. Lifting your finger or pen, or releasing the mouse button, submits it. A fading trail helps you follow the movement.
 
-A matching access code decrypts the stored action. ProtectedAction executes the stored script contents or opens the registered navigation target. The tile displays the result.
+A matching access code decrypts the stored action. ProtectedAction executes the stored script contents or opens the registered navigation target. The tile on which the code was entered displays the result. Other tiles show only shared states such as locks.
 
 Incomplete input is discarded after the configured input timeout. An empty **E**, a single tap on the drawing area and a cancelled drawing gesture do not count as failed attempts.
 
@@ -138,8 +146,9 @@ Every call takes the ProtectedAction instance ID as its first argument. Always p
 | Method | Additional arguments | Return | Description |
 | --- | --- | --- | --- |
 | `PRACT_RegisterAction` | `string $PIN, int $ObjectID, array $Parameters` | `bool` | Import an action script with parameters or register a navigation target. `$PIN` contains a PIN or pattern according to the instance mode. Pass `[]` for unused parameters. Reusing the access code replaces the action. |
+| `PRACT_RegisterActionEx` | `string $PIN, int $ObjectID, array $Parameters, bool $ShowOutput` | `bool` | Like `PRACT_RegisterAction`, optionally showing the script output on the tile. `$ShowOutput` is only allowed for scripts. |
 | `PRACT_Unregister` | `string $PIN` | `bool` | Remove the action assigned to the PIN or pattern. Returns `false` if the code is invalid or unregistered. |
-| `PRACT_RegisterSuperPIN` | `string $PIN` | `bool` | Register or replace the numeric Super PIN. |
+| `PRACT_RegisterSuperPIN` | `string $PIN` | `bool` | Register the numeric Super PIN once. Returns `false` if a Super PIN already exists; a new one requires a reset. |
 | `PRACT_Reset` | None | `void` | Delete all actions and the Super PIN, reset locks and counters, and allow input mode and code binding to be changed. |
 
 ### Unlocking and interactive recovery
@@ -211,6 +220,6 @@ Message codes are independent of the display language:
 | `VISUALIZATION_REQUIRED` | Use the built-in tile for this navigation target. |
 | `REREGISTRATION_REQUIRED` | The module code has changed. Reset and register again. |
 
-Status output contains no access codes, script contents, parameters or target IDs. During successful navigation, the target ID is transmitted over the visualization channel and is technically visible to other connected clients.
+Status output contains no access codes, script contents, parameters or target IDs. Result messages for tile input are sent only to the tile on which the code was entered; the `Status` variable and `PRACT_GetState()` still contain them for custom controls. During successful navigation, the target ID is transmitted over the visualization channel and is technically visible to other connected clients.
 
-`PRACT_InternalTimer()` is an internal timer callback. `RequestAction()`, `GetConfigurationForm()` and `GetVisualizationTile()` are used by Symcon itself.
+`PRACT_InternalTimer()` is an internal timer callback. The `PRACT_UI…()` methods serve the configuration form. `RequestAction()`, `GetConfigurationForm()` and `GetVisualizationTile()` are used by Symcon itself.

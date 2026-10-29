@@ -16,6 +16,7 @@ class ProtectedAction extends IPSModuleStrict
     private const KDF_CONTEXT = 'PRACTkey'; // Exactly 8 bytes for sodium_crypto_kdf_derive_from_key()
     private const SUBKEY_LOOKUP = 1;
     private const SUBKEY_ENCRYPTION = 2;
+    private const MAX_OUTPUT_LENGTH = 200;
     private const MIN_PIN_LENGTH = 4;
     private const MIN_PATTERN_LENGTH = 2;
     private const MAX_CODE_LENGTH = 16;
@@ -32,6 +33,11 @@ class ProtectedAction extends IPSModuleStrict
         'TEMPORARILY_LOCKED', 'PERMANENTLY_LOCKED', 'RECOVERY_ACTIVE',
         'SUPER_PIN_INVALID', 'UNLOCKED', 'VISUALIZATION_REQUIRED', 'REREGISTRATION_REQUIRED'
     ];
+
+    // Request of the tile submission being processed. Its result message is sent to that
+    // client only; other tiles never show the outcome of someone else's entry.
+    private ?string $resultRequestID = null;
+    private ?string $result = null;
 
     public function Create(): void
     {
@@ -126,6 +132,25 @@ class ProtectedAction extends IPSModuleStrict
             }
         }
         unset($element);
+        $captions = $this->ReadPropertyInteger('InputMode') === 1
+            ? ['Code' => 'Pattern (points 1 to 9)', 'CodeConfirmation' => 'Repeat pattern']
+            : [];
+        $superPINDefined = $this->ReadAttributeString('Recovery') !== '';
+        foreach ($form['actions'] as &$panel) {
+            foreach ($panel['items'] ?? [] as $index => $item) {
+                $name = $item['name'] ?? '';
+                if (isset($captions[$name])) {
+                    $panel['items'][$index]['caption'] = $captions[$name];
+                }
+                if (in_array($name, ['SuperPIN', 'SuperPINConfirmation', 'RegisterSuperPIN'], true)) {
+                    $panel['items'][$index]['visible'] = !$superPINDefined;
+                }
+                if ($name === 'SuperPINRegistered') {
+                    $panel['items'][$index]['visible'] = $superPINDefined;
+                }
+            }
+        }
+        unset($panel);
         return json_encode($form, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
     }
 
@@ -173,9 +198,75 @@ class ProtectedAction extends IPSModuleStrict
     {
         return $this->Synchronized(
             self::WAIT_ADMIN,
-            fn (): bool => $this->StoreAction($PIN, $ObjectID, $Parameters),
+            fn (): bool => $this->StoreAction($PIN, $ObjectID, $Parameters, false),
             false
         );
+    }
+
+    public function RegisterActionEx(string $PIN, int $ObjectID, array $Parameters, bool $ShowOutput): bool
+    {
+        return $this->Synchronized(
+            self::WAIT_ADMIN,
+            fn (): bool => $this->StoreAction($PIN, $ObjectID, $Parameters, $ShowOutput),
+            false
+        );
+    }
+
+    // Called by the configuration form. Codes are never stored as properties.
+    public function UIRegisterAction(string $Code, string $Confirmation, int $ObjectID, string $Parameters, bool $ShowOutput): void
+    {
+        $this->ClearFormCodes(['Code', 'CodeConfirmation']);
+        if ($Code !== $Confirmation) {
+            echo $this->Translate('The codes do not match.');
+            return;
+        }
+        $parameters = [];
+        if (trim($Parameters) !== '') {
+            try {
+                $parameters = json_decode($Parameters, true, 32, JSON_THROW_ON_ERROR);
+            } catch (JsonException $e) {
+                $parameters = null;
+            }
+            if (!is_array($parameters)) {
+                echo $this->Translate('Script parameters must be a JSON object.');
+                return;
+            }
+        }
+        echo $this->RegisterActionEx($Code, $ObjectID, $parameters, $ShowOutput)
+            ? $this->Translate('Action registered.')
+            : $this->Translate('Registration failed. Check the code, the target, the parameters and the instance status.');
+    }
+
+    public function UIUnregister(string $Code): void
+    {
+        $this->ClearFormCodes(['Code', 'CodeConfirmation']);
+        echo $this->Unregister($Code)
+            ? $this->Translate('Action removed.')
+            : $this->Translate('No action is registered for this code.');
+    }
+
+    public function UIRegisterSuperPIN(string $PIN, string $Confirmation): void
+    {
+        $this->ClearFormCodes(['SuperPIN', 'SuperPINConfirmation']);
+        if ($this->ReadAttributeString('Recovery') !== '') {
+            echo $this->Translate('A Super PIN is already registered. Reset the instance to define a new one.');
+            return;
+        }
+        if ($PIN !== $Confirmation) {
+            echo $this->Translate('The codes do not match.');
+            return;
+        }
+        echo $this->RegisterSuperPIN($PIN)
+            ? $this->Translate('Super PIN registered.')
+            : $this->Translate('Registration failed. The Super PIN must have 4 to 16 digits.');
+    }
+
+    public function UIUnlock(string $SuperPIN): void
+    {
+        $this->ClearFormCodes(['UnlockPIN']);
+        echo $this->Unlock($SuperPIN)
+            ? $this->Translate('Unlocked.')
+            : $this->Translate('Unlocking failed.');
     }
 
     public function Unregister(string $PIN): bool
@@ -186,8 +277,11 @@ class ProtectedAction extends IPSModuleStrict
     public function RegisterSuperPIN(string $PIN): bool
     {
         return $this->Synchronized(self::WAIT_ADMIN, function () use ($PIN): bool {
+            // The Super PIN can be defined only once. Replacing it would lift a permanent
+            // lock without knowing the old one; a forgotten Super PIN requires a reset.
             if (!$this->CryptoAvailable() || $this->ConfigurationError() !== '' ||
-                $this->ReregistrationRequired() || !$this->ValidPIN($PIN)) {
+                $this->ReregistrationRequired() || $this->ReadAttributeString('Recovery') !== '' ||
+                !$this->ValidPIN($PIN)) {
                 return false;
             }
             $payload = json_encode(['format' => self::PAYLOAD_FORMAT, 'purpose' => 'recovery'], JSON_THROW_ON_ERROR);
@@ -329,7 +423,7 @@ class ProtectedAction extends IPSModuleStrict
 
     public function GetState(): string
     {
-        return json_encode(array_merge($this->GetStatusData(), [
+        return json_encode(array_merge($this->GetStatusData(true), [
             'RegisteredActions'      => count($this->ReadActions()),
             'FailedAttempts'         => $this->ReadAttributeInteger('FailedAttempts'),
             'RecoveryDefined'        => $this->ReadAttributeString('Recovery') !== '',
@@ -389,11 +483,19 @@ class ProtectedAction extends IPSModuleStrict
         }
     }
 
-    private function StoreAction(string $PIN, int $ObjectID, array $Parameters): bool
+    private function ClearFormCodes(array $Fields): void
+    {
+        foreach ($Fields as $field) {
+            $this->UpdateFormField($field, 'value', '');
+        }
+    }
+
+    private function StoreAction(string $PIN, int $ObjectID, array $Parameters, bool $ShowOutput): bool
     {
         $normalized = $this->NormalizeAccessCode($PIN, false);
+        // IDs below 10000 are the root or the form's "none" selection, never a script or target.
         if (!$this->CryptoAvailable() || $this->ConfigurationError() !== '' || $this->ReregistrationRequired() ||
-            $normalized === null || !IPS_ObjectExists($ObjectID)) {
+            $normalized === null || $ObjectID < 10000 || !IPS_ObjectExists($ObjectID)) {
             return false;
         }
         sodium_memzero($PIN);
@@ -413,8 +515,11 @@ class ProtectedAction extends IPSModuleStrict
                     'script'     => $scriptText,
                     'parameters' => $Parameters
                 ];
+                if ($ShowOutput) {
+                    $action['output'] = true;
+                }
             } else {
-                if ($Parameters !== []) {
+                if ($Parameters !== [] || $ShowOutput) {
                     sodium_memzero($PIN);
                     return false;
                 }
@@ -513,7 +618,16 @@ class ProtectedAction extends IPSModuleStrict
         $requestID = is_string($packet['RequestID'] ?? null) &&
             preg_match('/^[A-Za-z0-9_-]{16,64}$/', $packet['RequestID']) === 1
             ? $packet['RequestID'] : null;
-        return $this->ProcessEntry($code, $requestID);
+        $this->resultRequestID = $requestID;
+        try {
+            return $this->ProcessEntry($code, $requestID);
+        } finally {
+            if ($this->result !== null && $this->resultRequestID !== null) {
+                $this->PublishResult($this->result, $this->resultRequestID);
+            }
+            $this->resultRequestID = null;
+            $this->result = null;
+        }
     }
 
     private function ProcessEntry(string $Code, ?string $RequestID): bool
@@ -559,6 +673,9 @@ class ProtectedAction extends IPSModuleStrict
         $this->PublishStatus();
         if ($result['target'] !== null && $RequestID !== null) {
             $this->PublishNavigation($result['target'], $RequestID);
+        }
+        if ($result['output'] !== null && $RequestID !== null) {
+            $this->PublishOutput($result['output'], $RequestID);
         }
         return $result['success'];
     }
@@ -647,37 +764,65 @@ class ProtectedAction extends IPSModuleStrict
 
     private function ExecutePayload(string $PlainText, ?string $RequestID): array
     {
+        $failed = ['success' => false, 'message' => 'ACTION_FAILED', 'target' => null, 'output' => null];
         try {
             $payload = json_decode($PlainText, true, 32, JSON_THROW_ON_ERROR);
         } catch (JsonException $e) {
-            return ['success' => false, 'message' => 'ACTION_FAILED', 'target' => null];
+            return $failed;
         }
         if (($payload['format'] ?? null) !== self::PAYLOAD_FORMAT) {
-            return ['success' => false, 'message' => 'ACTION_FAILED', 'target' => null];
+            return $failed;
         }
         if (($payload['type'] ?? null) === 'VisualizationTarget') {
             $objectID = $payload['objectID'] ?? null;
             if (!is_int($objectID) || !IPS_ObjectExists($objectID)) {
-                return ['success' => false, 'message' => 'ACTION_FAILED', 'target' => null];
+                return $failed;
             }
             if ($RequestID === null) {
-                return ['success' => false, 'message' => 'VISUALIZATION_REQUIRED', 'target' => null];
+                return ['success' => false, 'message' => 'VISUALIZATION_REQUIRED', 'target' => null, 'output' => null];
             }
-            return ['success' => true, 'message' => 'ACTION_EXECUTED', 'target' => $objectID];
+            return ['success' => true, 'message' => 'ACTION_EXECUTED', 'target' => $objectID, 'output' => null];
         }
         if (($payload['type'] ?? null) !== 'ScriptText' ||
             !is_string($payload['script'] ?? null) ||
             trim($payload['script']) === '' ||
             !is_array($payload['parameters'] ?? null)) {
-            return ['success' => false, 'message' => 'ACTION_FAILED', 'target' => null];
+            return $failed;
         }
+        // The context is set last so that registered parameters cannot replace it.
+        $parameters = array_merge($payload['parameters'], [
+            'SENDER'   => 'ProtectedAction',
+            'INSTANCE' => $this->InstanceID,
+            'SELF'     => $this->InstanceID
+        ]);
         try {
-            $executed = IPS_RunScriptTextEx($payload['script'], $payload['parameters']);
+            if (($payload['output'] ?? false) === true) {
+                // Runs synchronously; the instance accepts no other entry until the script ends.
+                $output = $this->LimitOutput(IPS_RunScriptTextWaitEx($payload['script'], $parameters));
+                return ['success' => true, 'message' => 'ACTION_EXECUTED', 'target' => null, 'output' => $output];
+            }
+            $executed = IPS_RunScriptTextEx($payload['script'], $parameters);
         } catch (Throwable $e) {
             $this->SendDebug('ExecuteAction', $e->getMessage(), 0);
-            return ['success' => false, 'message' => 'ACTION_FAILED', 'target' => null];
+            return $failed;
         }
-        return ['success' => $executed, 'message' => $executed ? 'ACTION_EXECUTED' : 'ACTION_FAILED', 'target' => null];
+        return [
+            'success' => $executed,
+            'message' => $executed ? 'ACTION_EXECUTED' : 'ACTION_FAILED',
+            'target'  => null,
+            'output'  => null
+        ];
+    }
+
+    private function LimitOutput(string $Output): ?string
+    {
+        $output = trim(mb_scrub($Output, 'UTF-8'));
+        if ($output === '') {
+            return null;
+        }
+        return mb_strlen($output, 'UTF-8') > self::MAX_OUTPUT_LENGTH
+            ? mb_substr($output, 0, self::MAX_OUTPUT_LENGTH - 1, 'UTF-8') . '…'
+            : $output;
     }
 
     // Returns ['recordID' => string, 'plainText' => string, 'legacy' => bool] or null.
@@ -1072,12 +1217,18 @@ class ProtectedAction extends IPSModuleStrict
         }
         $this->SetBuffer(self::MESSAGE_BUFFER, $Message);
         $this->SetTimerInterval('MessageTimer', $this->ReadPropertyInteger('MessageDuration') * 1000);
+        if ($this->resultRequestID !== null) {
+            $this->result = $Message;
+        }
     }
 
+    // Transient messages appear in the Status variable and GetState() for custom controls.
+    // Tiles receive them only through PublishResult().
     private function ClearTransientMessage(): void
     {
         $this->SetBuffer(self::MESSAGE_BUFFER, '');
         $this->SetTimerInterval('MessageTimer', 0);
+        $this->result = null;
     }
 
     private function ReadActions(): array
@@ -1121,11 +1272,19 @@ class ProtectedAction extends IPSModuleStrict
 
     private function PublishStatus(): void
     {
-        $status = $this->GetStatusData();
-        $this->SetValue('Status', json_encode($status, JSON_THROW_ON_ERROR));
-        $this->UpdateVisualizationValue(json_encode(
-            array_merge($status, $this->GetPresentationData()), JSON_THROW_ON_ERROR
-        ));
+        $this->SetValue('Status', json_encode($this->GetStatusData(true), JSON_THROW_ON_ERROR));
+        $this->UpdateVisualizationValue(json_encode($this->GetTileData(), JSON_THROW_ON_ERROR));
+    }
+
+    // Sent to all clients like navigation; only the client with this request ID shows it.
+    private function PublishResult(string $Message, string $RequestID): void
+    {
+        $this->UpdateVisualizationValue(json_encode([
+            'Result' => [
+                'RequestID' => $RequestID,
+                'Message'   => $Message
+            ]
+        ], JSON_THROW_ON_ERROR));
     }
 
     private function PublishNavigation(int $ObjectID, string $RequestID): void
@@ -1138,13 +1297,24 @@ class ProtectedAction extends IPSModuleStrict
         ], JSON_THROW_ON_ERROR));
     }
 
-    private function GetStatusData(): array
+    // Sent to all clients like navigation; only the client with this request ID shows it.
+    private function PublishOutput(string $Output, string $RequestID): void
+    {
+        $this->UpdateVisualizationValue(json_encode([
+            'Output' => [
+                'RequestID' => $RequestID,
+                'Text'      => $Output
+            ]
+        ], JSON_THROW_ON_ERROR | JSON_INVALID_UTF8_SUBSTITUTE));
+    }
+
+    private function GetStatusData(bool $IncludeTransient): array
     {
         $lockUntil = $this->ReadAttributeInteger('LockUntil');
         $recoveryMode = $this->ReadAttributeBoolean('RecoveryMode');
         $permanentlyLocked = $this->ReadAttributeBoolean('PermanentlyLocked');
         $inputActive = $this->GetBuffer(self::INPUT_BUFFER) !== '';
-        $transientMessage = $this->GetBuffer(self::MESSAGE_BUFFER);
+        $transientMessage = $IncludeTransient ? $this->GetBuffer(self::MESSAGE_BUFFER) : '';
         if ($this->ReregistrationRequired()) {
             $message = 'REREGISTRATION_REQUIRED';
         } elseif ($permanentlyLocked && !$recoveryMode) {
@@ -1178,6 +1348,7 @@ class ProtectedAction extends IPSModuleStrict
             'MinimumPatternLength' => self::MIN_PATTERN_LENGTH,
             'MaximumPatternLength' => self::MAX_CODE_LENGTH,
             'InputTimeout' => $this->ReadPropertyInteger('InputTimeout'),
+            'MessageDuration' => $this->ReadPropertyInteger('MessageDuration'),
             'Scramble' => $this->ReadPropertyBoolean('ScrambleKeypad'),
             'ScrambleInterval' => $this->ReadPropertyInteger('ScrambleInterval')
         ];
@@ -1185,6 +1356,6 @@ class ProtectedAction extends IPSModuleStrict
 
     private function GetTileData(): array
     {
-        return array_merge($this->GetStatusData(), $this->GetPresentationData());
+        return array_merge($this->GetStatusData(false), $this->GetPresentationData());
     }
 }

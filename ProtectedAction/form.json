@@ -95,8 +95,112 @@
     ],
     "actions": [
         {
-            "type": "Label",
-            "caption": "Actions are imported from tested scripts or registered as visualization targets through PRACT_RegisterAction()."
+            "type": "ExpansionPanel",
+            "caption": "Register action",
+            "items": [
+                {
+                    "type": "Label",
+                    "caption": "Choose a tested script or a visualization target. The script content is copied and stored encrypted."
+                },
+                {
+                    "type": "PasswordTextBox",
+                    "name": "Code",
+                    "caption": "PIN"
+                },
+                {
+                    "type": "PasswordTextBox",
+                    "name": "CodeConfirmation",
+                    "caption": "Repeat PIN"
+                },
+                {
+                    "type": "SelectObject",
+                    "name": "Target",
+                    "caption": "Script or navigation target"
+                },
+                {
+                    "type": "ValidationTextBox",
+                    "name": "Parameters",
+                    "caption": "Script parameters (JSON object, optional)"
+                },
+                {
+                    "type": "CheckBox",
+                    "name": "ShowOutput",
+                    "caption": "Show script output on the tile"
+                },
+                {
+                    "type": "RowLayout",
+                    "items": [
+                        {
+                            "type": "Button",
+                            "caption": "Register action",
+                            "onClick": "PRACT_UIRegisterAction($id, $Code, $CodeConfirmation, $Target, $Parameters, $ShowOutput);"
+                        },
+                        {
+                            "type": "Button",
+                            "caption": "Remove action for this code",
+                            "onClick": "PRACT_UIUnregister($id, $Code);"
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "type": "ExpansionPanel",
+            "caption": "Super PIN",
+            "items": [
+                {
+                    "type": "Label",
+                    "caption": "The Super PIN is always numeric, can be registered only once and lifts a permanent lock."
+                },
+                {
+                    "type": "PasswordTextBox",
+                    "name": "SuperPIN",
+                    "caption": "Super PIN"
+                },
+                {
+                    "type": "PasswordTextBox",
+                    "name": "SuperPINConfirmation",
+                    "caption": "Repeat Super PIN"
+                },
+                {
+                    "type": "Button",
+                    "name": "RegisterSuperPIN",
+                    "caption": "Register Super PIN",
+                    "onClick": "PRACT_UIRegisterSuperPIN($id, $SuperPIN, $SuperPINConfirmation);"
+                },
+                {
+                    "type": "Label",
+                    "name": "SuperPINRegistered",
+                    "caption": "A Super PIN is registered. Reset the instance to define a new one.",
+                    "visible": false
+                },
+                {
+                    "type": "PasswordTextBox",
+                    "name": "UnlockPIN",
+                    "caption": "Super PIN for unlocking"
+                },
+                {
+                    "type": "Button",
+                    "caption": "Unlock",
+                    "onClick": "PRACT_UIUnlock($id, $UnlockPIN);"
+                }
+            ]
+        },
+        {
+            "type": "ExpansionPanel",
+            "caption": "Reset",
+            "items": [
+                {
+                    "type": "Label",
+                    "caption": "Deletes all actions and the Super PIN and releases input mode and code binding."
+                },
+                {
+                    "type": "Button",
+                    "caption": "Reset all registrations",
+                    "onClick": "PRACT_Reset($id);",
+                    "confirm": "Delete all actions and the Super PIN?"
+                }
+            ]
         }
     ],
     "status": [

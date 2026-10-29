@@ -17,7 +17,9 @@ ProtectedAction aus dem Module Store installieren und eine Instanz anlegen. Vor 
 
 In Symcon ein Script mit der gewünschten Aktion erstellen und testen. Beispielsweise kann es den Bearbeitungsmodus der Visualisierung umschalten oder eine Beleuchtung einschalten.
 
-Anschliessend dieses Script über ein separates Registrierungsscript einer PIN oder einem Muster zuordnen. In den folgenden Beispielen ist `12345` die ProtectedAction-Instanz und `67890` das zuvor getestete Aktionsscript. Die IDs durch die eigenen Werte ersetzen.
+Anschliessend dieses Script einer PIN oder einem Muster zuordnen. Am einfachsten geht das in der Instanzkonfiguration: Unter **Aktion registrieren** den Code zweimal eingeben, das Script oder Navigationsziel wählen, bei Bedarf Scriptparameter als JSON-Objekt wie `{"Szene": 2}` angeben und **Aktion registrieren** wählen. Der Code wird weder in der Konfiguration noch in einem Script gespeichert. **Super-PIN** und **Zurücksetzen** funktionieren genauso.
+
+Alternativ ist ein separates Registrierungsscript möglich. In den folgenden Beispielen ist `12345` die ProtectedAction-Instanz und `67890` das zuvor getestete Aktionsscript. Die IDs durch die eigenen Werte ersetzen.
 
 #### Aktion mit PIN registrieren
 
@@ -59,6 +61,12 @@ Spätere Änderungen am ursprünglichen Script wirken sich nicht auf die registr
 
 Das letzte Argument `[]` ist für Scriptparameter vorgesehen. Falls das Script Parameter benötigt, dort ein Array übergeben; die Werte stehen im ausgeführten Script über `$_IPS` zur Verfügung. Ohne Parameter immer `[]` angeben.
 
+Zusätzlich erhält das ausgeführte Script immer `$_IPS['SENDER'] = 'ProtectedAction'` sowie die ID der ProtectedAction-Instanz in `$_IPS['INSTANCE']` und `$_IPS['SELF']`. Diese Schlüssel haben Vorrang vor gleichnamigen registrierten Parametern.
+
+#### Scriptausgabe anzeigen
+
+Mit **Scriptausgabe in der Kachel anzeigen** oder `PRACT_RegisterActionEx()` mit `$ShowOutput = true` wartet ProtectedAction, bis das Script beendet ist, und zeigt dessen Ausgabe (beispielsweise von `echo`) einige Sekunden in der Kachel an. Die Ausgabe ist auf 200 Zeichen begrenzt und erscheint nur auf dem Client, auf dem der Code eingegeben wurde. Technisch wird sie wie ein Navigationsziel an alle verbundenen Clients übertragen. Solange ein solches Script läuft, nimmt die Instanz keine weitere Eingabe an; es sollte deshalb kurz sein. Ohne diese Option laufen Scripte wie bisher im Hintergrund.
+
 **PIN beziehungsweise Muster und vertrauliche Parameter nach dem Test auch aus dem Registrierungsscript entfernen.**
 
 ### 3. Alternativ ein Navigationsziel registrieren
@@ -85,7 +93,7 @@ var_dump(PRACT_RegisterSuperPIN(12345, '8073519264'));
 
 Der Super-PIN ist immer numerisch, auch im Mustermodus. Einen ausreichend langen, separaten Code wählen und sicher aufbewahren. Anschliessend auch ihn aus dem Registrierungsscript entfernen. Die Registrierung allein startet noch keine Wiederherstellung.
 
-Der Super-PIN muss 4 bis 16 Ziffern lang sein.
+Der Super-PIN muss 4 bis 16 Ziffern lang sein. **Er kann nur einmal registriert werden.** Sonst könnte jeder mit Zugriff auf das System eine dauerhafte Sperre aufheben, indem er einfach einen neuen Super-PIN definiert. Wer den Super-PIN vergisst, setzt die Instanz mit `PRACT_Reset()` zurück und registriert alle Aktionen neu.
 
 ## Funktion
 
@@ -96,7 +104,7 @@ Die ProtectedAction-Instanz in der Visualisierung als Kachel verwenden. Je nach 
 - **PIN:** Ziffern antippen oder anklicken. **C** löscht die bisherige Eingabe, **E** schickt sie ab. Auf Wunsch werden die Ziffernpositionen gemischt.
 - **Muster:** Finger oder Stift aufsetzen beziehungsweise die linke Maustaste gedrückt halten und die Punkte in der registrierten Reihenfolge abfahren. Abheben oder Loslassen schickt das Muster ab. Eine verblassende Spur unterstützt die Orientierung.
 
-Bei einem passenden Zugangscode entschlüsselt ProtectedAction die hinterlegte Aktion. Der gespeicherte Scriptinhalt wird ausgeführt oder das registrierte Navigationsziel geöffnet. Die Kachel zeigt das Ergebnis an.
+Bei einem passenden Zugangscode entschlüsselt ProtectedAction die hinterlegte Aktion. Der gespeicherte Scriptinhalt wird ausgeführt oder das registrierte Navigationsziel geöffnet. Die Kachel, auf der der Code eingegeben wurde, zeigt das Ergebnis an. Andere Kacheln zeigen nur gemeinsame Zustände wie Sperren.
 
 Eine unvollständige Eingabe wird nach dem konfigurierten Eingabe-Timeout verworfen. Ein leeres **E**, ein einzelner Tipp auf die Zeichenfläche und eine abgebrochene Zeichengeste zählen nicht als Fehlversuch.
 
@@ -138,8 +146,9 @@ Alle Aufrufe erwarten als erstes Argument die Instanz-ID von ProtectedAction. PI
 | Methode | Weitere Parameter | Rückgabe | Beschreibung |
 | --- | --- | --- | --- |
 | `PRACT_RegisterAction` | `string $PIN, int $ObjectID, array $Parameters` | `bool` | Aktionsscript samt Parametern importieren oder ein Navigationsziel registrieren. `$PIN` enthält je nach Instanzmodus die PIN oder das Muster. Für unbenutzte Parameter `[]` übergeben. Derselbe Zugangscode ersetzt die bisherige Aktion. |
+| `PRACT_RegisterActionEx` | `string $PIN, int $ObjectID, array $Parameters, bool $ShowOutput` | `bool` | Wie `PRACT_RegisterAction`, optional mit Anzeige der Scriptausgabe in der Kachel. `$ShowOutput` ist nur bei Scripten erlaubt. |
 | `PRACT_Unregister` | `string $PIN` | `bool` | Aktion der PIN beziehungsweise des Musters entfernen. `false`, wenn der Code ungültig oder nicht registriert ist. |
-| `PRACT_RegisterSuperPIN` | `string $PIN` | `bool` | Numerischen Super-PIN registrieren oder ersetzen. |
+| `PRACT_RegisterSuperPIN` | `string $PIN` | `bool` | Numerischen Super-PIN einmalig registrieren. `false`, wenn bereits ein Super-PIN existiert; ein neuer erfordert einen Reset. |
 | `PRACT_Reset` | Keine | `void` | Alle Aktionen und den Super-PIN löschen, Sperren und Zähler zurücksetzen sowie Eingabemodus und Codebindung zur Änderung freigeben. |
 
 ### Entsperren und interaktive Recovery
@@ -211,6 +220,6 @@ Die Meldungscodes bleiben unabhängig von der Anzeigesprache gleich:
 | `VISUALIZATION_REQUIRED` | Für dieses Navigationsziel die eingebaute Kachel verwenden. |
 | `REREGISTRATION_REQUIRED` | Der Modulcode wurde geändert. Zurücksetzen und neu registrieren. |
 
-Die Statusausgaben enthalten keine Zugangscodes, Scriptinhalte, Parameter oder Ziel-IDs. Bei erfolgreicher Navigation wird die Ziel-ID über den Visualisierungskanal übertragen und ist dabei technisch auch für andere verbundene Clients sichtbar.
+Die Statusausgaben enthalten keine Zugangscodes, Scriptinhalte, Parameter oder Ziel-IDs. Ergebnismeldungen zu Eingaben in der Kachel gehen nur an die Kachel, auf der der Code eingegeben wurde; die Variable `Status` und `PRACT_GetState()` enthalten sie weiterhin für eigene Bedienelemente. Bei erfolgreicher Navigation wird die Ziel-ID über den Visualisierungskanal übertragen und ist dabei technisch auch für andere verbundene Clients sichtbar.
 
-`PRACT_InternalTimer()` ist ein interner Timeraufruf. `RequestAction()`, `GetConfigurationForm()` und `GetVisualizationTile()` werden vom Symcon-System verwendet.
+`PRACT_InternalTimer()` ist ein interner Timeraufruf. Die Methoden `PRACT_UI…()` dienen dem Konfigurationsformular. `RequestAction()`, `GetConfigurationForm()` und `GetVisualizationTile()` werden vom Symcon-System verwendet.

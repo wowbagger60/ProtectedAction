@@ -134,7 +134,7 @@
     };
     let tileState = {
         Message: 'READY', InputActive: false, Locked: false, LockUntil: 0,
-        ServerTime: 0, receivedAt: Date.now(), Scramble: false, ScrambleInterval: 0,
+        ServerTime: 0, receivedAt: Date.now(), MessageDuration: 3, Scramble: false, ScrambleInterval: 0,
         InputMode: 0, RecoveryMode: false, MinimumPatternLength: 2, MaximumPatternLength: 16, InputTimeout: 20
     };
     let scrambleTimer = null;
@@ -144,6 +144,12 @@
     // The PIN is collected on this client only and submitted as one packet.
     let entry = '';
     let entryTimer = null;
+    // Result and script output of this client's own request, shown instead of the status message.
+    let lastRequestID = null;
+    let resultMessage = '';
+    let resultTimer = null;
+    let outputText = '';
+    let outputTimer = null;
 
     // Symcon supplies the content margins relative to the complete tile.
     // The title and its controls occupy the top margin.
@@ -176,6 +182,8 @@
     document.querySelectorAll('.key-digit').forEach((button) => {
         button.addEventListener('click', () => {
             if (tileState.Locked || entry.length >= Number(tileState.MaximumPatternLength)) return;
+            if (outputText !== '') clearOutput();
+            if (resultMessage !== '') clearResult();
             entry += button.dataset.digit;
             if (entryTimer !== null) clearTimeout(entryTimer);
             entryTimer = setTimeout(finishEntry, Math.max(5, Number(tileState.InputTimeout)) * 1000);
@@ -185,6 +193,7 @@
     document.getElementById('clear').addEventListener('click', finishEntry);
     function beginClientRequest() {
         pendingNavigationRequest = createRequestID();
+        lastRequestID = pendingNavigationRequest;
         if (pendingNavigationTimer !== null) clearTimeout(pendingNavigationTimer);
         pendingNavigationTimer = setTimeout(() => {
             pendingNavigationRequest = null;
@@ -209,12 +218,22 @@
             handleNavigation(update.Navigation);
             return;
         }
+        if (update.Output) {
+            handleOutput(update.Output);
+            return;
+        }
+        if (update.Result) {
+            handleResult(update.Result);
+            return;
+        }
         const wasPatternMode = isPatternMode();
         tileState = Object.assign(tileState, update, {receivedAt: Date.now()});
         refreshRequested = false;
         if (tileState.Locked || wasPatternMode !== isPatternMode()) {
             cancelPattern();
             resetEntry();
+            resultMessage = '';
+            outputText = '';
         }
         document.querySelector('.keypad').hidden = isPatternMode();
         patternPad.toggleAttribute('hidden', !isPatternMode());
@@ -233,13 +252,48 @@
         return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
     }
 
-    function handleNavigation(navigation) {
-        if (!pendingNavigationRequest || navigation.RequestID !== pendingNavigationRequest) return;
+    function claimRequest(requestID) {
+        if (!pendingNavigationRequest || requestID !== pendingNavigationRequest) return false;
         pendingNavigationRequest = null;
         if (pendingNavigationTimer !== null) clearTimeout(pendingNavigationTimer);
         pendingNavigationTimer = null;
+        return true;
+    }
+
+    function handleNavigation(navigation) {
+        if (!claimRequest(navigation.RequestID)) return;
         const objectID = Number(navigation.ObjectID);
         if (Number.isInteger(objectID) && objectID > 0) openObject(objectID);
+    }
+
+    function handleOutput(output) {
+        if (!claimRequest(output.RequestID) || typeof output.Text !== 'string') return;
+        outputText = output.Text;
+        if (outputTimer !== null) clearTimeout(outputTimer);
+        outputTimer = setTimeout(clearOutput, Math.max(5, Number(tileState.MessageDuration)) * 1000);
+        renderMessage();
+    }
+
+    function handleResult(result) {
+        if (!lastRequestID || result.RequestID !== lastRequestID || typeof result.Message !== 'string') return;
+        resultMessage = result.Message;
+        if (resultTimer !== null) clearTimeout(resultTimer);
+        resultTimer = setTimeout(clearResult, Math.max(1, Number(tileState.MessageDuration)) * 1000);
+        renderMessage();
+    }
+
+    function clearResult() {
+        resultMessage = '';
+        if (resultTimer !== null) clearTimeout(resultTimer);
+        resultTimer = null;
+        renderMessage();
+    }
+
+    function clearOutput() {
+        outputText = '';
+        if (outputTimer !== null) clearTimeout(outputTimer);
+        outputTimer = null;
+        renderMessage();
     }
 
     function localize(text) {
@@ -247,7 +301,14 @@
     }
 
     function renderMessage() {
-        const message = entry !== '' ? 'INPUT_ACTIVE' : tileState.Message;
+        // Priority: own input, lock states, own script output, own result, shared status.
+        if (outputText !== '' && entry === '' && !tileState.Locked) {
+            document.getElementById('module-message').innerText = outputText;
+            return;
+        }
+        let message = tileState.Message;
+        if (entry !== '') message = 'INPUT_ACTIVE';
+        else if (resultMessage !== '' && !tileState.Locked) message = resultMessage;
         let text = messageTexts[message] || message || '';
         if (isPatternMode()) {
             if (message === 'READY') text = 'Draw pattern';
@@ -434,6 +495,8 @@
             !event.isPrimary || (event.pointerType === 'mouse' && event.button !== 0)) return;
         event.preventDefault();
         cancelPattern();
+        if (outputText !== '') clearOutput();
+        if (resultMessage !== '') clearResult();
         patternPointer = event.pointerId;
         patternPad.setPointerCapture(event.pointerId);
         samplePattern(patternPosition(event));
