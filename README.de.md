@@ -262,3 +262,65 @@ Die Meldungscodes bleiben unabhängig von der Anzeigesprache gleich:
 Die Statusausgaben enthalten keine Zugangscodes, Scriptinhalte, Parameter oder Ziel-IDs. Ergebnismeldungen zu Eingaben in der Kachel gehen nur an die Kachel, auf der der Code eingegeben wurde; die Variable `Status` und `PRACT_GetState()` enthalten sie weiterhin für eigene Bedienelemente. Bei erfolgreicher Navigation wird die Ziel-ID über den Visualisierungskanal übertragen und ist dabei technisch auch für andere verbundene Clients sichtbar.
 
 `PRACT_InternalTimer()` ist ein interner Timeraufruf. Die Methoden `PRACT_UI…()` dienen dem Konfigurationsformular. `RequestAction()`, `GetConfigurationForm()` und `GetVisualizationTile()` werden vom Symcon-System verwendet.
+
+## Änderungen
+
+**1.2 Build 4:**
+
+- Optionales Benachrichtigungsscript für Fehlversuche, Sperren, ausgeführte
+  Aktionen, Wiederherstellung, Reset und erforderliche Neuregistrierung.
+- Die Sperreinstellungen (Verzögerungen, dauerhafte Sperre,
+  Wiederherstellungsversuche) werden mit der ersten Registrierung eingefroren.
+  Bestehende Registrierungen übernehmen beim Update die aktuellen Werte.
+- `PRACT_Unregister()` zählt unbekannte Codes als Fehlversuch und prüft während
+  einer Sperre nichts.
+
+**1.2 Build 3:**
+
+- Neue Kachel, ab IP-Symcon 9.1 zusätzlich im Vollbild-Modus.
+- Wählbarer Tastenstil (rund, Pillen, Kacheln), Tastenbeschriftung
+  (ENTER / CLEAR oder OK / LÖSCHEN) und Musterspur (markant, verblassend,
+  unsichtbar).
+- Bedienung mit physischer Tastatur.
+
+**1.2 Build 2:**
+
+- Registrierung von Aktionen und Super-PIN sowie Entsperren direkt in der
+  Instanzkonfiguration.
+- Aktionsscripte erhalten `SENDER`, `INSTANCE` und `SELF` in `$_IPS`.
+- Optionale Anzeige der Scriptausgabe in der Kachel
+  (`PRACT_RegisterActionEx()`).
+- Ergebnismeldungen erscheinen nur auf der Kachel, auf der der Code eingegeben
+  wurde.
+- Der Super-PIN kann nur noch einmal registriert werden; ein neuer erfordert
+  einen Reset.
+
+**1.2 Build 1:**
+
+- Eingaben werden pro Instanz serialisiert, und jeder Versuch wird vor der
+  Prüfung gezählt. Parallele Anfragen können die Fehlversuchssperre nicht mehr
+  umgehen.
+- Die PIN wird in der Kachel gesammelt und als Ganzes übertragen. Ein leeres
+  ENTER und ein einzelner Tipp auf die Zeichenfläche zählen nicht als
+  Fehlversuch.
+- Neues Speicherformat: pro Eingabe nur noch eine Schlüsselableitung,
+  unabhängig von der Anzahl Aktionen.
+- Status **Neuregistrierung erforderlich**, wenn sich bei Codebindung der
+  Modulcode geändert hat.
+- **Update von 1.1:** Registrierungen ohne Codebindung werden bei der ersten
+  erfolgreichen Eingabe automatisch ins neue Format übernommen. Mit Codebindung
+  zeigt die Instanz **Neuregistrierung erforderlich**; dann zurücksetzen und
+  neu registrieren. `PRACT_Enter()` kann keine Navigation mehr auslösen und
+  liefert dafür `VISUALIZATION_REQUIRED`.
+
+**1.1 und früher:** Erstveröffentlichung mit PIN-Eingabe; später
+Mustereingabe, optionale Codebindung und `PRACT_Unlock()`.
+
+## Unterstützung
+
+Dieses Modul ist kostenlos. Schenkungen als Unterstützung für den Autor werden
+gerne angenommen: PayPal an ueli.schweizer@cassanis.fr
+
+## Lizenz
+
+MIT, siehe [LICENSE](LICENSE).

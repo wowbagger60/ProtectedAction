@@ -262,3 +262,59 @@ Message codes are independent of the display language:
 Status output contains no access codes, script contents, parameters or target IDs. Result messages for tile input are sent only to the tile on which the code was entered; the `Status` variable and `PRACT_GetState()` still contain them for custom controls. During successful navigation, the target ID is transmitted over the visualization channel and is technically visible to other connected clients.
 
 `PRACT_InternalTimer()` is an internal timer callback. The `PRACT_UI…()` methods serve the configuration form. `RequestAction()`, `GetConfigurationForm()` and `GetVisualizationTile()` are used by Symcon itself.
+
+## Changelog
+
+**1.2 Build 4:**
+
+- Optional notification script for failed attempts, locks, executed actions,
+  recovery, reset and required re-registration.
+- The lock settings (delays, permanent lock, recovery attempts) are frozen with
+  the first registration. Existing registrations adopt the current values on
+  update.
+- `PRACT_Unregister()` counts unknown codes as failed attempts and checks
+  nothing while the instance is locked.
+
+**1.2 Build 3:**
+
+- New tile, additionally available in fullscreen mode from IP-Symcon 9.1.
+- Selectable keypad style (round, pills, tiles), key labels (ENTER / CLEAR or
+  OK / CLEAR, translated) and pattern trail (prominent, fading, invisible).
+- Physical keyboard support.
+
+**1.2 Build 2:**
+
+- Register actions and the Super PIN and unlock directly in the instance
+  configuration.
+- Action scripts receive `SENDER`, `INSTANCE` and `SELF` in `$_IPS`.
+- Optional display of script output on the tile (`PRACT_RegisterActionEx()`).
+- Result messages appear only on the tile on which the code was entered.
+- The Super PIN can be registered only once; a new one requires a reset.
+
+**1.2 Build 1:**
+
+- Input is serialized per instance, and each attempt is counted before it is
+  checked. Parallel requests can no longer bypass the failure lockout.
+- The PIN is collected on the tile and submitted as a whole. An empty ENTER and
+  a single tap on the drawing area do not count as failed attempts.
+- New storage format: one key derivation per entry, regardless of the number
+  of actions.
+- **Re-registration required** status when the module code has changed with
+  code binding enabled.
+- **Update from 1.1:** registrations without code binding are migrated to the
+  new format automatically on the first successful entry. With code binding,
+  the instance shows **Re-registration required**; reset and register again.
+  `PRACT_Enter()` can no longer trigger navigation and returns
+  `VISUALIZATION_REQUIRED` instead.
+
+**1.1 and earlier:** Initial release with PIN input; later pattern input,
+optional code binding and `PRACT_Unlock()`.
+
+## Support
+
+This module is free of charge. Donations to support the author are gratefully
+accepted: PayPal to ueli.schweizer@cassanis.fr
+
+## License
+
+MIT, see [LICENSE](LICENSE).
