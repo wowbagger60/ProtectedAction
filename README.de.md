@@ -97,16 +97,16 @@ Der Super-PIN muss 4 bis 16 Ziffern lang sein. **Er kann nur einmal registriert 
 
 ## Funktion
 
-Die ProtectedAction-Instanz in der Visualisierung als Kachel verwenden. Je nach Eingabemodus erscheint ein Zahlenpad oder eine quadratische Zeichenfläche.
+Die ProtectedAction-Instanz in der Visualisierung als Kachel verwenden. Je nach Eingabemodus erscheint ein Zahlenpad oder eine quadratische Zeichenfläche. Ab Symcon 9.1 kann die Kachel zusätzlich im Vollbild-Modus angezeigt werden; Tasten und Zeichenfläche wachsen mit dem verfügbaren Platz bis zu einer angenehmen Maximalgrösse.
 
 ### Eingabe und Ausführung
 
-- **PIN:** Ziffern antippen oder anklicken. **C** löscht die bisherige Eingabe, **E** schickt sie ab. Auf Wunsch werden die Ziffernpositionen gemischt.
-- **Muster:** Finger oder Stift aufsetzen beziehungsweise die linke Maustaste gedrückt halten und die Punkte in der registrierten Reihenfolge abfahren. Abheben oder Loslassen schickt das Muster ab. Eine verblassende Spur unterstützt die Orientierung.
+- **PIN:** Ziffern antippen oder anklicken. **CLEAR** löscht die gesamte Eingabe, **ENTER** schickt sie ab. Auf Wunsch werden die Ziffernpositionen gemischt. Mit einer physischen Tastatur funktionieren auch Ziffern, Enter sowie Escape, Entf oder Rücktaste (löscht die gesamte Eingabe).
+- **Muster:** Finger oder Stift aufsetzen beziehungsweise die linke Maustaste gedrückt halten und die Punkte in der registrierten Reihenfolge abfahren. Abheben oder Loslassen schickt das Muster ab. Je nach Einstellung verbindet eine markante Spur die erreichten Punkte, eine verblassende Spur folgt dem Finger, oder es wird nichts angezeigt.
 
 Bei einem passenden Zugangscode entschlüsselt ProtectedAction die hinterlegte Aktion. Der gespeicherte Scriptinhalt wird ausgeführt oder das registrierte Navigationsziel geöffnet. Die Kachel, auf der der Code eingegeben wurde, zeigt das Ergebnis an. Andere Kacheln zeigen nur gemeinsame Zustände wie Sperren.
 
-Eine unvollständige Eingabe wird nach dem konfigurierten Eingabe-Timeout verworfen. Ein leeres **E**, ein einzelner Tipp auf die Zeichenfläche und eine abgebrochene Zeichengeste zählen nicht als Fehlversuch.
+Eine unvollständige Eingabe wird nach dem konfigurierten Eingabe-Timeout verworfen. Ein leeres **ENTER**, ein einzelner Tipp auf die Zeichenfläche und eine abgebrochene Zeichengeste zählen nicht als Fehlversuch.
 
 ### Fehlversuche und Entsperren
 
@@ -132,6 +132,9 @@ Ein vorheriges `PRACT_BeginRecovery()` ist dafür nicht nötig. Bei korrektem Su
 | Anzeigedauer temporärer Meldungen | 3 Sekunden | Wie lange eine Rückmeldung sichtbar bleibt. |
 | Ziffern mischen | Aus | Ziffernpositionen im Zahlenpad mischen. Im Mustermodus gilt das nur für das Zahlenpad der Super-PIN-Eingabe. |
 | Mischintervall bei Inaktivität | 0 Sekunden | Zahlenpad regelmässig neu mischen; `0` deaktiviert das Intervall. |
+| Tastenstil | Kacheln | **Rund** (wie ein Handy-Sperrbildschirm), **Pillen** (Material-Stil) oder **Kacheln**. |
+| Tastenbeschriftung | ENTER / CLEAR | **ENTER / CLEAR** oder **OK / LÖSCHEN** (übersetzt). |
+| Musterspur | Markant | **Markant:** erreichte Punkte werden hervorgehoben und verbunden. **Verblassend:** nur die Fingerspur, die ausblendet. **Unsichtbar:** keine Spur, für Orte, an denen jemand zuschauen könnte. |
 
 ### Schutzumfang
 
@@ -159,7 +162,7 @@ Alle Aufrufe erwarten als erstes Argument die Instanz-ID von ProtectedAction. PI
 | `PRACT_BeginRecovery` | Keine | `bool` | Neue Recovery-Runde starten und das Zahlenpad für den Super-PIN freigeben. Nur bei permanenter Sperre und registriertem Super-PIN möglich. |
 | `PRACT_CancelRecovery` | Keine | `void` | Interaktive Recovery beenden, ohne zu entsperren. Bisherige Recovery-Fehlversuche bleiben erhalten. |
 
-Für die interaktive Wiederherstellung `PRACT_BeginRecovery(12345)` aufrufen, danach den Super-PIN im Zahlenpad eingeben und mit **E** bestätigen.
+Für die interaktive Wiederherstellung `PRACT_BeginRecovery(12345)` aufrufen, danach den Super-PIN im Zahlenpad eingeben und mit **ENTER** bestätigen.
 
 `Unlock()` und die interaktive Eingabe verwenden denselben Recovery-Zähler. Ist die Zahl der Wiederherstellungsversuche ausgeschöpft, wird auch ein korrekter Super-PIN abgelehnt. Der Administrator kann mit `PRACT_BeginRecovery()` ausdrücklich eine neue Recovery-Runde starten. Wiederholte `Unlock()`-Aufrufe setzen den Zähler nicht zurück.
 

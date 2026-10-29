@@ -97,16 +97,16 @@ The Super PIN must contain 4 to 16 digits. **It can be registered only once.** O
 
 ## Operation
 
-Use the ProtectedAction instance as a tile in the visualization. It displays a numeric keypad or a square drawing pad, depending on the configured input mode.
+Use the ProtectedAction instance as a tile in the visualization. It displays a numeric keypad or a square drawing pad, depending on the configured input mode. From Symcon 9.1, the tile can also be shown in fullscreen mode; keys and drawing pad grow with the available space up to a comfortable maximum size.
 
 ### Input and execution
 
-- **PIN:** Tap or click the digits. **C** clears the current input; **E** submits it. Digit positions can optionally be shuffled.
-- **Pattern:** Touch with your finger or pen, or hold the left mouse button, and trace the registered point sequence. Lifting your finger or pen, or releasing the mouse button, submits it. A fading trail helps you follow the movement.
+- **PIN:** Tap or click the digits. **CLEAR** clears the whole input; **ENTER** submits it. Digit positions can optionally be shuffled. With a physical keyboard, digits, Enter, and Escape, Delete or Backspace (clears the whole input) work as well.
+- **Pattern:** Touch with your finger or pen, or hold the left mouse button, and trace the registered point sequence. Lifting your finger or pen, or releasing the mouse button, submits it. Depending on the setting, a prominent trail connects the points reached, a fading trail follows the finger, or nothing is shown.
 
 A matching access code decrypts the stored action. ProtectedAction executes the stored script contents or opens the registered navigation target. The tile on which the code was entered displays the result. Other tiles show only shared states such as locks.
 
-Incomplete input is discarded after the configured input timeout. An empty **E**, a single tap on the drawing area and a cancelled drawing gesture do not count as failed attempts.
+Incomplete input is discarded after the configured input timeout. An empty **ENTER**, a single tap on the drawing area and a cancelled drawing gesture do not count as failed attempts.
 
 ### Failed attempts and unlocking
 
@@ -132,6 +132,9 @@ No preceding `PRACT_BeginRecovery()` call is required. A correct Super PIN unloc
 | Display duration for temporary messages | 3 seconds | How long feedback remains visible. |
 | Scramble digits | Off | Shuffle keypad digits. In pattern mode, this applies only to the keypad for Super PIN entry. |
 | Scramble interval while idle | 0 seconds | Periodically reshuffle the keypad; `0` disables the interval. |
+| Keypad style | Tiles | **Round** (like a phone lock screen), **Pills** (Material style) or **Tiles**. |
+| Key labels | ENTER / CLEAR | **ENTER / CLEAR** or **OK / CLEAR** (translated, for example OK / LÖSCHEN). |
+| Pattern trail | Prominent | **Prominent:** reached points are highlighted and connected. **Fading:** only the finger trail, fading out. **Invisible:** no trail, for places where others might watch. |
 
 ### Scope of protection
 
@@ -159,7 +162,7 @@ Every call takes the ProtectedAction instance ID as its first argument. Always p
 | `PRACT_BeginRecovery` | None | `bool` | Start a new recovery round and enable the keypad for Super PIN entry. Requires permanent lockout and a registered Super PIN. |
 | `PRACT_CancelRecovery` | None | `void` | End interactive recovery without unlocking. Previous recovery failures are preserved. |
 
-For interactive recovery, call `PRACT_BeginRecovery(12345)`, enter the Super PIN on the keypad and confirm with **E**.
+For interactive recovery, call `PRACT_BeginRecovery(12345)`, enter the Super PIN on the keypad and confirm with **ENTER**.
 
 `Unlock()` and interactive entry share the same recovery counter. Once the recovery attempt limit is exhausted, even a correct Super PIN is rejected. The administrator can explicitly start a new round with `PRACT_BeginRecovery()`. Repeated `Unlock()` calls do not reset the counter.
 

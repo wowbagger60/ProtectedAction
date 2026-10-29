@@ -1,123 +1,109 @@
-<style>
-    * { box-sizing: border-box; }
-    html { width: 100%; height: 100%; overflow: hidden; }
-    body {
-        margin: 0;
-        width: 100%;
-        height: 100%;
-        padding: 8px;
-        overflow: hidden;
-        color: var(--content-color, inherit);
-        user-select: none;
-    }
-    .protected-action {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 7px;
-        width: 100%;
-        height: 100%;
-        min-height: 0;
-    }
-    .module-message {
-        flex: 0 0 auto;
-        width: 100%;
-        min-height: 20px;
-        text-align: center;
-        font-size: clamp(16px, 2.4vw, 20px);
-        font-weight: 400;
-        line-height: 1.2;
-    }
-    .keypad {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        grid-template-rows: repeat(4, minmax(0, 1fr));
-        gap: 5px;
-        width: 100%;
-        flex: 1 1 auto;
-        min-width: 0;
-        min-height: 0;
-    }
-    .key {
-        min-width: 0;
-        min-height: 0;
-        padding: 2px;
-        border: 1px solid color-mix(in srgb, currentColor 24%, transparent);
-        border-radius: 7px;
-        background: color-mix(in srgb, currentColor 8%, transparent);
-        color: inherit;
-        font: inherit;
-        font-size: clamp(16px, 3vw, 21px);
-        font-weight: 500;
-        cursor: pointer;
-        touch-action: manipulation;
-        -webkit-tap-highlight-color: transparent;
-    }
-    .key:active:not(:disabled) {
-        transform: scale(0.95);
-        background: color-mix(in srgb, currentColor 17%, transparent);
-    }
-    .key:disabled {
-        cursor: default;
-        opacity: 0.3;
-    }
-    .key-command {
-        font-size: clamp(14px, 2.5vw, 18px);
-        font-weight: 650;
-    }
-    @media (max-height: 220px) {
-        body { padding: 5px; }
-        .protected-action { gap: 4px; }
-        .module-message { min-height: 16px; font-size: 14px; }
-        .keypad { gap: 3px; grid-template-rows: repeat(4, minmax(0, 1fr)); }
-        .key { border-radius: 5px; font-size: 15px; }
-    }
-    [hidden] { display: none !important; }
-    .pattern-pad {
-        display: block;
-        flex: 1 1 0;
-        width: 100%;
-        min-width: 0;
-        min-height: 0;
-        touch-action: none;
-        user-select: none;
-        -webkit-user-select: none;
-        -webkit-touch-callout: none;
-    }
-    .pattern-point { fill: currentColor; opacity: 0.45; }
-    .pattern-trail {
-        fill: none;
-        stroke: #3b82f6;
-        stroke-width: 4;
-        stroke-linecap: round;
-        pointer-events: none;
-    }
-</style>
+<div id="pract-root" data-pract-root><script>
+(() => {
+    'use strict';
+    // The tile lives in a shadow root so that it works as a normal tile (type 1)
+    // and as a fullscreen-capable tile (type 2) without touching the host page.
+    const host = document.currentScript?.closest('[data-pract-root]') || document.getElementById('pract-root');
+    const ui = host.attachShadow({mode: 'open'});
+    ui.innerHTML = `<style>
+        :host { display: block; box-sizing: border-box; margin: 0; overflow: hidden; min-width: 0; min-height: 0; }
+        * { box-sizing: border-box; }
+        [hidden] { display: none !important; }
+        .pa {
+            --accent: var(--accent-color, #3b82f6);
+            height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center;
+            gap: var(--msg-gap, 8px); padding: 4px; color: var(--content-color, inherit);
+            user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+        }
+        .message {
+            flex: 0 0 auto; width: 100%; text-align: center; line-height: 1.25;
+            font-size: var(--msg-font, 18px); overflow: hidden; overflow-wrap: anywhere;
+            display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--msg-lines, 1);
+            min-height: calc(var(--msg-font, 18px) * 1.25);
+        }
+        .keypad {
+            display: grid; grid-template-columns: repeat(3, var(--cw, 56px)); grid-auto-rows: var(--ch, 56px);
+            gap: var(--gap, 8px); justify-content: center;
+        }
+        .key {
+            width: var(--cw, 56px); height: var(--ch, 56px); margin: 0; padding: 0;
+            display: flex; align-items: center; justify-content: center;
+            font: inherit; font-size: var(--digit-font, 22px); line-height: 1; color: inherit;
+            cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+            transition: transform 0.08s, background-color 0.08s;
+        }
+        .key:active:not(:disabled) { transform: scale(0.94); }
+        .key:disabled { opacity: 0.3; cursor: default; }
+        .command { font-size: var(--command-font, 13px); font-weight: 600; letter-spacing: 0.04em; white-space: nowrap; }
 
-<div class="protected-action">
-    <div id="module-message" class="module-message"></div>
-    <section class="keypad" aria-label="PIN keypad">
-        <button class="key key-digit" data-digit="7">7</button>
-        <button class="key key-digit" data-digit="8">8</button>
-        <button class="key key-digit" data-digit="9">9</button>
-        <button class="key key-digit" data-digit="4">4</button>
-        <button class="key key-digit" data-digit="5">5</button>
-        <button class="key key-digit" data-digit="6">6</button>
-        <button class="key key-digit" data-digit="1">1</button>
-        <button class="key key-digit" data-digit="2">2</button>
-        <button class="key key-digit" data-digit="3">3</button>
-        <button id="clear" class="key key-command">C</button>
-        <button class="key key-digit" data-digit="0">0</button>
-        <button id="enter" class="key key-command">E</button>
-    </section>
-    <svg id="pattern-pad" class="pattern-pad" viewBox="0 0 360 360" hidden
-         aria-label="Pattern input: hold, draw, then release" role="img">
-        <g id="pattern-points"></g>
-        <g id="pattern-trail" class="pattern-trail"></g>
-    </svg>
-</div>
+        .round .key {
+            border-radius: 50%; border: 1.5px solid color-mix(in srgb, currentColor 28%, transparent);
+            background: transparent; font-weight: 300;
+        }
+        .round .key:active:not(:disabled) { background: color-mix(in srgb, currentColor 14%, transparent); }
+        .round .command { border-color: transparent; }
+        .round .enter { color: var(--accent); }
 
-<script>
+        .pills .key {
+            border: 0; border-radius: calc(var(--ch, 56px) / 2);
+            background: color-mix(in srgb, currentColor 10%, transparent); font-weight: 400;
+        }
+        .pills .key:active:not(:disabled) { background: color-mix(in srgb, currentColor 20%, transparent); }
+        .pills .enter, .pills .enter:active:not(:disabled) { background: var(--accent); color: #fff; }
+
+        .tiles .key {
+            border: 1px solid color-mix(in srgb, currentColor 24%, transparent);
+            border-radius: max(4px, calc(var(--ch, 56px) * 0.12));
+            background: color-mix(in srgb, currentColor 6%, transparent); font-weight: 500;
+        }
+        .tiles .key:active:not(:disabled) { background: color-mix(in srgb, currentColor 16%, transparent); }
+        .tiles .enter, .tiles .enter:active:not(:disabled) { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+        .pattern-pad {
+            display: block; flex: 0 0 auto; width: var(--pattern, 240px); height: var(--pattern, 240px);
+            touch-action: none;
+        }
+        .pattern-point { fill: currentColor; opacity: 0.45; transition: r 0.1s, opacity 0.1s; }
+        .pattern-point.hit { fill: var(--accent); opacity: 1; }
+        .pattern-links line { stroke: var(--accent); stroke-width: 11; stroke-linecap: round; opacity: 0.85; }
+        .pattern-live { stroke: var(--accent); stroke-width: 6; stroke-linecap: round; opacity: 0.45; }
+        .pattern-trail path { fill: none; stroke: var(--accent); stroke-width: 8; stroke-linecap: round; }
+    </style>
+    <div class="pa tiles">
+        <div class="message" role="status"></div>
+        <section class="keypad">
+            <button class="key digit" data-digit="7">7</button>
+            <button class="key digit" data-digit="8">8</button>
+            <button class="key digit" data-digit="9">9</button>
+            <button class="key digit" data-digit="4">4</button>
+            <button class="key digit" data-digit="5">5</button>
+            <button class="key digit" data-digit="6">6</button>
+            <button class="key digit" data-digit="1">1</button>
+            <button class="key digit" data-digit="2">2</button>
+            <button class="key digit" data-digit="3">3</button>
+            <button class="key command clear"></button>
+            <button class="key digit" data-digit="0">0</button>
+            <button class="key command enter"></button>
+        </section>
+        <svg class="pattern-pad" viewBox="0 0 360 360" role="img" hidden>
+            <g class="pattern-links"></g>
+            <line class="pattern-live" hidden></line>
+            <g class="pattern-trail"></g>
+            <g class="pattern-points"></g>
+        </svg>
+    </div>`;
+
+    const root = ui.querySelector('.pa');
+    const messageElement = ui.querySelector('.message');
+    const keypad = ui.querySelector('.keypad');
+    const clearKey = ui.querySelector('.clear');
+    const enterKey = ui.querySelector('.enter');
+    const patternPad = ui.querySelector('.pattern-pad');
+    const patternLinks = ui.querySelector('.pattern-links');
+    const patternLive = ui.querySelector('.pattern-live');
+    const patternTrail = ui.querySelector('.pattern-trail');
+    const patternPointGroup = ui.querySelector('.pattern-points');
+
     const messageTexts = {
         READY: 'Enter PIN',
         INPUT_ACTIVE: 'PIN entry in progress',
@@ -132,11 +118,22 @@
         VISUALIZATION_REQUIRED: 'Use the built-in input tile',
         REREGISTRATION_REQUIRED: 'Re-registration required'
     };
+    const keypadStyles = ['round', 'pills', 'tiles'];
+    // Key cell proportions relative to the base size, maximum base size and gap ratio per style.
+    const keypadGeometry = {
+        round: {width: 1, height: 1, maximum: 104, gap: 0.2},
+        pills: {width: 1.45, height: 0.78, maximum: 92, gap: 0.14},
+        tiles: {width: 1.4, height: 0.82, maximum: 92, gap: 0.12}
+    };
+    const MAXIMUM_PATTERN_SIZE = 520;
+
     let tileState = {
         Message: 'READY', InputActive: false, Locked: false, LockUntil: 0,
         ServerTime: 0, receivedAt: Date.now(), MessageDuration: 3, Scramble: false, ScrambleInterval: 0,
-        InputMode: 0, RecoveryMode: false, MinimumPatternLength: 2, MaximumPatternLength: 16, InputTimeout: 20
+        InputMode: 0, RecoveryMode: false, MinimumPatternLength: 2, MaximumPatternLength: 16, InputTimeout: 20,
+        ContentMargins: false, KeypadStyle: 2, KeyLabels: 0, PatternTrail: 0
     };
+    let initialized = false;
     let scrambleTimer = null;
     let refreshRequested = false;
     let pendingNavigationRequest = null;
@@ -151,68 +148,112 @@
     let outputText = '';
     let outputTimer = null;
 
-    // Symcon supplies the content margins relative to the complete tile.
-    // The title and its controls occupy the top margin.
+    function localize(text) {
+        return typeof translate === 'function' ? translate(text) : text;
+    }
+
+    // Symcon supplies the content margins of a normal tile (type 1), whose frame also covers
+    // the title. A fullscreen-capable tile (type 2) already starts below the title.
     function applyContentBounds() {
+        if (!tileState.ContentMargins) {
+            host.style.padding = '0';
+            return;
+        }
         const parameters = new URLSearchParams(window.location.search);
         const number = (name) => {
             const value = Number.parseFloat(parameters.get(name) ?? '0');
             return Number.isFinite(value) ? Math.max(0, value) : 0;
         };
-        const top = number('margintop');
         const side = number('marginside');
-        const bottom = number('marginbottom');
-        document.body.style.padding =
-            `${top + 8}px ${side + 8}px ${bottom + 8}px ${side + 8}px`;
-    }
-    applyContentBounds();
-
-    function resetEntry() {
-        entry = '';
-        if (entryTimer !== null) clearTimeout(entryTimer);
-        entryTimer = null;
+        host.style.padding = `${number('margintop')}px ${side}px ${number('marginbottom')}px ${side}px`;
     }
 
-    function finishEntry() {
-        resetEntry();
-        scrambleDigits();
-        renderMessage();
+    // Fill the visible space below the tile's top edge, never more than the parent offers.
+    function fit() {
+        const parent = host.parentElement;
+        if (!parent) return;
+        const viewport = window.visualViewport;
+        const viewportBottom = Math.min(document.documentElement.clientHeight || window.innerHeight,
+            viewport ? viewport.offsetTop + viewport.height : window.innerHeight);
+        const inBody = parent === document.body || parent === document.documentElement;
+        const bottomMargin = inBody ? Number.parseFloat(getComputedStyle(document.body).marginBottom) || 0 : 0;
+        const space = Math.max(0, viewportBottom - Math.max(0, host.getBoundingClientRect().top) - bottomMargin);
+        host.style.height = Math.floor(inBody ? space : Math.min(space, parent.clientHeight)) + 'px';
     }
 
-    document.querySelectorAll('.key-digit').forEach((button) => {
-        button.addEventListener('click', () => {
-            if (tileState.Locked || entry.length >= Number(tileState.MaximumPatternLength)) return;
-            if (outputText !== '') clearOutput();
-            if (resultMessage !== '') clearResult();
-            entry += button.dataset.digit;
-            if (entryTimer !== null) clearTimeout(entryTimer);
-            entryTimer = setTimeout(finishEntry, Math.max(5, Number(tileState.InputTimeout)) * 1000);
-            renderMessage();
-        });
-    });
-    document.getElementById('clear').addEventListener('click', finishEntry);
-    function beginClientRequest() {
-        pendingNavigationRequest = createRequestID();
-        lastRequestID = pendingNavigationRequest;
-        if (pendingNavigationTimer !== null) clearTimeout(pendingNavigationTimer);
-        pendingNavigationTimer = setTimeout(() => {
-            pendingNavigationRequest = null;
-            pendingNavigationTimer = null;
-        }, 30000);
-        return pendingNavigationRequest;
+    function clamp(value, minimum, maximum) {
+        return Math.min(maximum, Math.max(minimum, value));
     }
-    function submitCode(code) {
-        requestAction('Submit', JSON.stringify({Code: code, RequestID: beginClientRequest()}));
-    }
-    document.getElementById('enter').addEventListener('click', () => {
-        // An empty ENTER is ignored and never counts as a failed attempt.
-        if (entry === '' || tileState.Locked) return;
-        const code = entry;
-        finishEntry();
-        submitCode(code);
-    });
 
-    function handleMessage(data) {
+    function messageLines() {
+        return outputText !== '' && entry === '' && !tileState.Locked ? 3 : 1;
+    }
+
+    function layout() {
+        const width = root.clientWidth - 8;
+        const height = root.clientHeight - 8;
+        if (width <= 0 || height <= 0) return;
+        const lines = messageLines();
+        if (isPatternMode()) {
+            const estimate = Math.min(width, height, MAXIMUM_PATTERN_SIZE);
+            const font = clamp(estimate * 0.06, 13, 28);
+            const gap = clamp(font * 0.6, 4, 16);
+            const size = Math.max(0, Math.min(width, height - font * 1.25 * lines - gap, MAXIMUM_PATTERN_SIZE));
+            setVariables({'--pattern': size, '--msg-font': font, '--msg-gap': gap});
+        } else {
+            const style = keypadStyles[Number(tileState.KeypadStyle)] || 'tiles';
+            const geometry = keypadGeometry[style];
+            const base = (availableHeight) => Math.min(
+                width / (3 * geometry.width + 2 * geometry.gap),
+                availableHeight / (4 * geometry.height + 3 * geometry.gap),
+                geometry.maximum
+            );
+            const font = clamp(base(height) * 0.26, 13, 28);
+            const messageGap = clamp(font * 0.6, 4, 18);
+            const keypadHeight = height - font * 1.25 * lines - messageGap;
+            const size = Math.max(0, base(keypadHeight));
+            const cellWidth = size * geometry.width;
+            // Flat keys may grow up to 35 % taller when a narrow tile leaves vertical space.
+            const rowSpace = (keypadHeight - 3 * size * geometry.gap) / 4;
+            const cellHeight = style === 'round'
+                ? size
+                : clamp(rowSpace, size * geometry.height, size * geometry.height * 1.35);
+            const digitFont = style === 'round' ? size * 0.4 : Math.min(cellHeight * 0.48, cellWidth * 0.36);
+            const longest = Math.max(clearKey.textContent.length, enterKey.textContent.length, 2);
+            setVariables({
+                '--cw': cellWidth, '--ch': cellHeight, '--gap': size * geometry.gap,
+                '--digit-font': digitFont,
+                '--command-font': clamp(Math.min(digitFont * 0.45, cellWidth * 0.9 / (longest * 0.7)), 9, 22),
+                '--msg-font': font, '--msg-gap': messageGap
+            });
+        }
+        root.style.setProperty('--msg-lines', String(lines));
+    }
+
+    function setVariables(variables) {
+        for (const [name, value] of Object.entries(variables)) {
+            root.style.setProperty(name, `${Math.floor(value * 10) / 10}px`);
+        }
+    }
+
+    function applyPresentation() {
+        const style = keypadStyles[Number(tileState.KeypadStyle)] || 'tiles';
+        root.classList.remove(...keypadStyles);
+        root.classList.add(style);
+        const labels = Number(tileState.KeyLabels) === 1
+            ? [localize('CLEAR'), 'OK']
+            : ['CLEAR', 'ENTER'];
+        clearKey.textContent = labels[0];
+        enterKey.textContent = labels[1];
+        keypad.setAttribute('aria-label', localize('PIN keypad'));
+        patternPad.setAttribute('aria-label', localize('Pattern input: hold, draw, then release'));
+    }
+
+    function isPatternMode() {
+        return Number(tileState.InputMode) === 1 && !tileState.RecoveryMode;
+    }
+
+    window.handleMessage = function (data) {
         const update = typeof data === 'string' ? JSON.parse(data) : data;
         if (update.Navigation) {
             handleNavigation(update.Navigation);
@@ -235,21 +276,94 @@
             resultMessage = '';
             outputText = '';
         }
-        document.querySelector('.keypad').hidden = isPatternMode();
+        applyContentBounds();
+        applyPresentation();
+        fit();
+        keypad.hidden = isPatternMode();
         patternPad.toggleAttribute('hidden', !isPatternMode());
         patternPad.setAttribute('aria-disabled', String(Boolean(tileState.Locked)));
-        renderMessage();
-        document.querySelectorAll('.key').forEach((button) => button.disabled = Boolean(tileState.Locked));
+        ui.querySelectorAll('.key').forEach((button) => button.disabled = Boolean(tileState.Locked));
         configureScrambleTimer();
-        if (!document.body.dataset.initialized) scrambleDigits();
-        document.body.dataset.initialized = 'true';
+        if (!initialized) scrambleDigits();
+        initialized = true;
+        renderMessage();
+    };
+
+    function resetEntry() {
+        entry = '';
+        if (entryTimer !== null) clearTimeout(entryTimer);
+        entryTimer = null;
     }
+
+    function finishEntry() {
+        resetEntry();
+        scrambleDigits();
+        renderMessage();
+    }
+
+    function inputDigit(digit) {
+        if (tileState.Locked || isPatternMode() || entry.length >= Number(tileState.MaximumPatternLength)) return;
+        if (outputText !== '') clearOutput();
+        if (resultMessage !== '') clearResult();
+        entry += digit;
+        if (entryTimer !== null) clearTimeout(entryTimer);
+        entryTimer = setTimeout(finishEntry, Math.max(5, Number(tileState.InputTimeout)) * 1000);
+        renderMessage();
+    }
+
+    function enter() {
+        // An empty ENTER is ignored and never counts as a failed attempt.
+        if (entry === '' || tileState.Locked) return;
+        const code = entry;
+        finishEntry();
+        submitCode(code);
+    }
+
+    ui.querySelectorAll('.digit').forEach((button) => {
+        button.addEventListener('click', () => inputDigit(button.dataset.digit));
+    });
+    clearKey.addEventListener('click', finishEntry);
+    enterKey.addEventListener('click', enter);
+
+    // Physical keyboard: digits, Enter, and Escape/Delete/Backspace to clear the whole entry.
+    document.addEventListener('keydown', (event) => {
+        if (event.repeat || event.ctrlKey || event.metaKey || event.altKey || isPatternMode()) return;
+        const target = event.composedPath()[0];
+        if (target instanceof HTMLElement &&
+            (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))) return;
+        if (!host.isConnected || host.getClientRects().length === 0) return;
+        if (/^[0-9]$/.test(event.key)) {
+            inputDigit(event.key);
+        } else if (event.key === 'Enter') {
+            enter();
+        } else if (['Escape', 'Delete', 'Backspace'].includes(event.key)) {
+            finishEntry();
+        } else {
+            return;
+        }
+        event.preventDefault();
+    });
 
     function createRequestID() {
         if (crypto.randomUUID) return crypto.randomUUID();
         const bytes = new Uint8Array(16);
         crypto.getRandomValues(bytes);
         return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+    }
+
+    function beginClientRequest() {
+        pendingNavigationRequest = createRequestID();
+        lastRequestID = pendingNavigationRequest;
+        if (pendingNavigationTimer !== null) clearTimeout(pendingNavigationTimer);
+        pendingNavigationTimer = setTimeout(() => {
+            pendingNavigationRequest = null;
+            pendingNavigationTimer = null;
+        }, 30000);
+        return pendingNavigationRequest;
+    }
+
+    function submitCode(code) {
+        requestAction('Submit', JSON.stringify({Code: code, RequestID: beginClientRequest()}));
     }
 
     function claimRequest(requestID) {
@@ -296,14 +410,11 @@
         renderMessage();
     }
 
-    function localize(text) {
-        return typeof translate === 'function' ? translate(text) : text;
-    }
-
     function renderMessage() {
+        layout();
         // Priority: own input, lock states, own script output, own result, shared status.
         if (outputText !== '' && entry === '' && !tileState.Locked) {
-            document.getElementById('module-message').innerText = outputText;
+            messageElement.innerText = outputText;
             return;
         }
         let message = tileState.Message;
@@ -315,7 +426,8 @@
             if (message === 'INPUT_ACTIVE') text = 'Pattern entry in progress';
             if (message === 'PIN_INVALID') text = 'Pattern invalid';
         }
-        document.getElementById('module-message').innerText = localize(text);
+        messageElement.innerText = localize(text);
+        updateCountdown();
     }
 
     // Unbiased random index from the platform CSPRNG.
@@ -330,7 +442,7 @@
 
     function scrambleDigits() {
         if (!tileState.Scramble || entry !== '' || isPatternMode()) return;
-        const buttons = Array.from(document.querySelectorAll('.key-digit'));
+        const buttons = Array.from(ui.querySelectorAll('.digit'));
         const digits = buttons.map((button) => button.dataset.digit);
         for (let i = digits.length - 1; i > 0; i--) {
             const j = randomIndex(i + 1);
@@ -338,7 +450,7 @@
         }
         buttons.forEach((button, index) => {
             button.dataset.digit = digits[index];
-            button.innerText = digits[index];
+            button.textContent = digits[index];
         });
     }
 
@@ -356,23 +468,18 @@
             Math.floor((Date.now() - tileState.receivedAt) / 1000);
         const remaining = Math.max(0, tileState.LockUntil - estimatedServerTime);
         if (remaining > 0) {
-            document.getElementById('module-message').innerText =
-                localize(messageTexts.TEMPORARILY_LOCKED) + ' (' + remaining + ' s)';
+            messageElement.innerText = localize(messageTexts.TEMPORARILY_LOCKED) + ' (' + remaining + ' s)';
         } else if (!refreshRequested) {
             refreshRequested = true;
             requestAction('Refresh', true);
         }
     }
-    function isPatternMode() {
-        return Number(tileState.InputMode) === 1 && !tileState.RecoveryMode;
-    }
 
-    const patternPad = document.getElementById('pattern-pad');
-    const patternPoints = document.getElementById('pattern-points');
-    const patternTrail = document.getElementById('pattern-trail');
-    patternPad.setAttribute('aria-label', localize('Pattern input: hold, draw, then release'));
-    document.querySelector('.keypad').setAttribute('aria-label', localize('PIN keypad'));
+    // Pattern input
     const svgNS = 'http://www.w3.org/2000/svg';
+    const POINT_RADIUS = 9;
+    const HIT_RADIUS = 16;
+    const CAPTURE_RADIUS = 30;
     const points = Array.from({length: 9}, (_, i) => ({
         number: String(i + 1), x: 60 + (i % 3) * 120, y: 60 + Math.floor(i / 3) * 120
     }));
@@ -380,9 +487,10 @@
         const circle = document.createElementNS(svgNS, 'circle');
         circle.setAttribute('cx', point.x);
         circle.setAttribute('cy', point.y);
-        circle.setAttribute('r', 8);
+        circle.setAttribute('r', POINT_RADIUS);
         circle.setAttribute('class', 'pattern-point');
-        patternPoints.append(circle);
+        patternPointGroup.append(circle);
+        point.node = circle;
     }
     let patternPointer = null;
     let patternSequence = [];
@@ -393,14 +501,18 @@
     let trailSegments = [];
     let trailFrame = null;
 
+    function trailMode() {
+        return [0, 1, 2].includes(Number(tileState.PatternTrail)) ? Number(tileState.PatternTrail) : 0;
+    }
+
     function fadeTrail(now) {
-        trailSegments = trailSegments.filter(segment => {
-            const opacity = 1 - (now - segment.time) / 650;
+        trailSegments = trailSegments.filter((segment) => {
+            const opacity = 1 - (now - segment.time) / 700;
             if (opacity <= 0) {
                 segment.node.remove();
                 return false;
             }
-            segment.node.setAttribute('opacity', opacity * 0.85);
+            segment.node.setAttribute('opacity', opacity * 0.9);
             return true;
         });
         trailFrame = trailSegments.length ? requestAnimationFrame(fadeTrail) : null;
@@ -411,6 +523,12 @@
         trailFrame = null;
         for (const segment of trailSegments) segment.node.remove();
         trailSegments = [];
+        patternLinks.replaceChildren();
+        patternLive.setAttribute('hidden', '');
+        for (const point of points) {
+            point.node.classList.remove('hit');
+            point.node.setAttribute('r', POINT_RADIUS);
+        }
     }
 
     function cancelPattern() {
@@ -430,7 +548,7 @@
     }
 
     function patternPosition(event) {
-        // SVG may be letterboxed in a wide or tall tile; use the actual SVG transform.
+        // The pad may be letterboxed; use the actual SVG transform.
         const matrix = patternPad.getScreenCTM();
         if (!matrix) return null;
         const point = patternPad.createSVGPoint();
@@ -440,35 +558,64 @@
     }
 
     function appendPatternPoint(point) {
-        if (patternSequence[patternSequence.length - 1] === point.number) return;
+        const last = patternSequence[patternSequence.length - 1];
+        if (last === point.number) return;
         if (patternSequence.length >= Number(tileState.MaximumPatternLength)) {
             patternOverflow = true;
             return;
         }
         patternSequence.push(point.number);
+        if (trailMode() !== 0) return;
+        point.node.classList.add('hit');
+        point.node.setAttribute('r', HIT_RADIUS);
+        if (last !== undefined) {
+            const from = points[Number(last) - 1];
+            const line = document.createElementNS(svgNS, 'line');
+            line.setAttribute('x1', from.x);
+            line.setAttribute('y1', from.y);
+            line.setAttribute('x2', point.x);
+            line.setAttribute('y2', point.y);
+            patternLinks.append(line);
+        }
+    }
+
+    function drawLiveLine(position) {
+        const last = patternSequence[patternSequence.length - 1];
+        if (trailMode() !== 0 || last === undefined) return;
+        const from = points[Number(last) - 1];
+        patternLive.setAttribute('x1', from.x);
+        patternLive.setAttribute('y1', from.y);
+        patternLive.setAttribute('x2', position.x);
+        patternLive.setAttribute('y2', position.y);
+        patternLive.removeAttribute('hidden');
+    }
+
+    function drawFadingSegment(from, to) {
+        if (trailMode() !== 1) return;
+        const path = document.createElementNS(svgNS, 'path');
+        path.setAttribute('d', `M${from.x},${from.y}L${to.x},${to.y}`);
+        patternTrail.append(path);
+        trailSegments.push({node: path, time: performance.now()});
+        if (trailFrame === null) trailFrame = requestAnimationFrame(fadeTrail);
     }
 
     function samplePattern(position) {
         if (!position) return;
         if (patternPrevious === null) {
-            const point = points.find(p => Math.hypot(p.x - position.x, p.y - position.y) <= 30);
+            const point = points.find((p) => Math.hypot(p.x - position.x, p.y - position.y) <= CAPTURE_RADIUS);
             if (point) appendPatternPoint(point);
         } else {
             const dx = position.x - patternPrevious.x;
             const dy = position.y - patternPrevious.y;
             const a = dx * dx + dy * dy;
             if (a > 0) {
-                const path = document.createElementNS(svgNS, 'path');
-                path.setAttribute('d', `M${patternPrevious.x},${patternPrevious.y}L${position.x},${position.y}`);
-                patternTrail.append(path);
-                trailSegments.push({node: path, time: performance.now()});
-                if (trailFrame === null) trailFrame = requestAnimationFrame(fadeTrail);
+                drawFadingSegment(patternPrevious, position);
                 const hits = [];
                 for (const point of points) {
                     const fx = patternPrevious.x - point.x;
                     const fy = patternPrevious.y - point.y;
                     const b = 2 * (fx * dx + fy * dy);
-                    const c = fx * fx + fy * fy - 30 * 30;
+                    const c = fx * fx + fy * fy - CAPTURE_RADIUS * CAPTURE_RADIUS;
                     const discriminant = b * b - 4 * a * c;
                     if (discriminant < 0) continue;
                     const t0 = (-b - Math.sqrt(discriminant)) / (2 * a);
@@ -479,6 +626,7 @@
                 for (const hit of hits) appendPatternPoint(hit.point);
             }
         }
+        drawLiveLine(position);
         patternPrevious = position;
     }
 
@@ -490,7 +638,7 @@
         }, Math.max(5, Number(tileState.InputTimeout)) * 1000);
     }
 
-    patternPad.addEventListener('pointerdown', event => {
+    patternPad.addEventListener('pointerdown', (event) => {
         if (!isPatternMode() || tileState.Locked || patternPointer !== null ||
             !event.isPrimary || (event.pointerType === 'mouse' && event.button !== 0)) return;
         event.preventDefault();
@@ -501,9 +649,9 @@
         patternPad.setPointerCapture(event.pointerId);
         samplePattern(patternPosition(event));
         refreshPatternTimeout();
-        document.getElementById('module-message').innerText = localize('Pattern entry in progress');
+        messageElement.innerText = localize('Pattern entry in progress');
     });
-    patternPad.addEventListener('pointermove', event => {
+    patternPad.addEventListener('pointermove', (event) => {
         if (event.pointerId !== patternPointer) return;
         event.preventDefault();
         const events = event.getCoalescedEvents ? event.getCoalescedEvents() : [];
@@ -524,9 +672,9 @@
         submitCode(pattern);
     }
     // Capture phase also receives pointerup if the pad has just lost pointer capture.
-    window.addEventListener('pointerup', event => finishPattern(event, false), true);
-    window.addEventListener('pointercancel', event => finishPattern(event, true), true);
-    patternPad.addEventListener('lostpointercapture', event => {
+    window.addEventListener('pointerup', (event) => finishPattern(event, false), true);
+    window.addEventListener('pointercancel', (event) => finishPattern(event, true), true);
+    patternPad.addEventListener('lostpointercapture', (event) => {
         if (patternPointer === null || event.pointerId !== patternPointer) return;
         if (captureLossTimer !== null) clearTimeout(captureLossTimer);
         const pointer = event.pointerId;
@@ -540,11 +688,20 @@
         }, 200);
     });
     for (const name of ['touchstart', 'touchmove', 'dragstart', 'selectstart']) {
-        patternPad.addEventListener(name, event => event.preventDefault(), {passive: false});
+        patternPad.addEventListener(name, (event) => event.preventDefault(), {passive: false});
     }
     window.addEventListener('blur', () => { cancelPattern(); renderMessage(); });
     document.addEventListener('visibilitychange', () => {
         if (document.hidden) { cancelPattern(); renderMessage(); }
     });
+
+    applyPresentation();
+    const resizeObserver = new ResizeObserver(() => { fit(); layout(); });
+    if (host.parentElement) resizeObserver.observe(host.parentElement);
+    resizeObserver.observe(root);
+    window.addEventListener('resize', fit);
+    window.visualViewport?.addEventListener('resize', fit);
+    fit();
     setInterval(updateCountdown, 250);
-</script>
+})();
+</script></div>

@@ -73,7 +73,18 @@
             "Unlocking failed.": "Entsperren fehlgeschlagen.",
             "The Super PIN is always numeric, can be registered only once and lifts a permanent lock.": "Der Super-PIN ist immer numerisch, kann nur einmal registriert werden und hebt eine dauerhafte Sperre auf.",
             "A Super PIN is registered. Reset the instance to define a new one.": "Ein Super-PIN ist registriert. Für einen neuen Super-PIN die Instanz zurücksetzen.",
-            "A Super PIN is already registered. Reset the instance to define a new one.": "Es ist bereits ein Super-PIN registriert. Für einen neuen Super-PIN die Instanz zurücksetzen."
+            "A Super PIN is already registered. Reset the instance to define a new one.": "Es ist bereits ein Super-PIN registriert. Für einen neuen Super-PIN die Instanz zurücksetzen.",
+            "Keypad style": "Tastenstil",
+            "Round": "Rund",
+            "Pills": "Pillen",
+            "Tiles": "Kacheln",
+            "Key labels": "Tastenbeschriftung",
+            "OK / CLEAR": "OK / LÖSCHEN",
+            "CLEAR": "LÖSCHEN",
+            "Pattern trail": "Musterspur",
+            "Prominent": "Markant",
+            "Fading": "Verblassend",
+            "Invisible": "Unsichtbar"
         }
     }
 }

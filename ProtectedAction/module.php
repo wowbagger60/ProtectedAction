@@ -42,7 +42,7 @@ class ProtectedAction extends IPSModuleStrict
     public function Create(): void
     {
         parent::Create();
-        $this->SetVisualizationType(1);
+        $this->SetVisualizationType($this->VisualizationType());
 
         $this->RegisterPropertyInteger('InputMode', 0); // 0 = PIN, 1 = pattern
         $this->RegisterPropertyBoolean('BindToModuleCode', true);
@@ -54,6 +54,9 @@ class ProtectedAction extends IPSModuleStrict
         $this->RegisterPropertyInteger('MessageDuration', 3);
         $this->RegisterPropertyBoolean('ScrambleKeypad', false);
         $this->RegisterPropertyInteger('ScrambleInterval', 0);
+        $this->RegisterPropertyInteger('KeypadStyle', 2); // 0 = round, 1 = pills, 2 = tiles
+        $this->RegisterPropertyInteger('KeyLabels', 0); // 0 = ENTER/CLEAR, 1 = OK/translated CLEAR
+        $this->RegisterPropertyInteger('PatternTrail', 0); // 0 = prominent, 1 = fading, 2 = invisible
 
         $this->RegisterAttributeInteger('RegisteredInputMode', -1);
         $this->RegisterAttributeInteger('RegisteredCodeBinding', -1);
@@ -76,6 +79,7 @@ class ProtectedAction extends IPSModuleStrict
     public function ApplyChanges(): void
     {
         parent::ApplyChanges();
+        $this->SetVisualizationType($this->VisualizationType());
         $this->SetTimerInterval('MessageTimer', 0);
         $this->SetTimerInterval('InputTimer', 0);
         $this->SetBuffer(self::MESSAGE_BUFFER, '');
@@ -468,6 +472,12 @@ class ProtectedAction extends IPSModuleStrict
             // Busy with an entry or registration; try again shortly.
             $this->SetTimerInterval($timers[$Timer], 1000);
         }
+    }
+
+    private function VisualizationType(): int
+    {
+        // Fullscreen-capable HTML tiles (type 2) exist from 9.1; older kernels use the normal HTML SDK (type 1).
+        return version_compare(IPS_GetKernelVersion(), '9.1', '>=') ? 2 : 1;
     }
 
     private function Synchronized(int $Timeout, callable $Callback, mixed $Busy): mixed
@@ -1350,7 +1360,12 @@ class ProtectedAction extends IPSModuleStrict
             'InputTimeout' => $this->ReadPropertyInteger('InputTimeout'),
             'MessageDuration' => $this->ReadPropertyInteger('MessageDuration'),
             'Scramble' => $this->ReadPropertyBoolean('ScrambleKeypad'),
-            'ScrambleInterval' => $this->ReadPropertyInteger('ScrambleInterval')
+            'ScrambleInterval' => $this->ReadPropertyInteger('ScrambleInterval'),
+            // Only normal tiles (type 1) overlap the title; type 2 already excludes it.
+            'ContentMargins' => $this->VisualizationType() === 1,
+            'KeypadStyle' => $this->ReadPropertyInteger('KeypadStyle'),
+            'KeyLabels' => $this->ReadPropertyInteger('KeyLabels'),
+            'PatternTrail' => $this->ReadPropertyInteger('PatternTrail')
         ];
     }
 

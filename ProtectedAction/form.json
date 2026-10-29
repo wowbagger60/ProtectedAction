@@ -80,6 +80,59 @@
             "maximum": 60
         },
         {
+            "type": "Select",
+            "name": "KeypadStyle",
+            "caption": "Keypad style",
+            "options": [
+                {
+                    "caption": "Round",
+                    "value": 0
+                },
+                {
+                    "caption": "Pills",
+                    "value": 1
+                },
+                {
+                    "caption": "Tiles",
+                    "value": 2
+                }
+            ]
+        },
+        {
+            "type": "Select",
+            "name": "KeyLabels",
+            "caption": "Key labels",
+            "options": [
+                {
+                    "caption": "ENTER / CLEAR",
+                    "value": 0
+                },
+                {
+                    "caption": "OK / CLEAR",
+                    "value": 1
+                }
+            ]
+        },
+        {
+            "type": "Select",
+            "name": "PatternTrail",
+            "caption": "Pattern trail",
+            "options": [
+                {
+                    "caption": "Prominent",
+                    "value": 0
+                },
+                {
+                    "caption": "Fading",
+                    "value": 1
+                },
+                {
+                    "caption": "Invisible",
+                    "value": 2
+                }
+            ]
+        },
+        {
             "type": "CheckBox",
             "name": "ScrambleKeypad",
             "caption": "Scramble digits (in pattern mode for Super PIN entry only)"
