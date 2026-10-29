@@ -11,7 +11,7 @@ Install ProtectedAction from the Module Store and create an instance. Choose and
 - **Input mode:** PIN for the numeric keypad or Pattern for the drawing pad. Each instance uses one of these modes. You can register different PINs or patterns for different actions.
 - **Code binding:** **Require re-registration after module code changes** is enabled by default. It provides additional protection: if the module code changes, existing actions and the Super PIN can no longer be decrypted. After a module update that changes the code, reset and re-register them. With code binding disabled, registrations survive compatible module updates. An update to Symcon itself is not what this setting refers to. When the module code has changed, the instance shows **Re-registration required**, and correct input does not count as a failed attempt.
 
-**Both settings are locked after the first action or Super PIN registration.** To change them, reset the instance with `PRACT_Reset()`, apply the new settings and register all actions and the Super PIN again. Reset deletes the existing registrations.
+**Both settings are locked after the first action or Super PIN registration**, together with the lock settings (start delay, base delay, permanent lock and recovery attempts). Otherwise, anyone able to change the configuration could raise the limits and guess codes quickly. A changed value, even through `IPS_SetProperty()`, puts the instance into an error state that blocks all input. To change them, reset the instance with `PRACT_Reset()`, apply the new settings and register all actions and the Super PIN again. Reset deletes the existing registrations.
 
 ### 2. Create an action script
 
@@ -83,6 +83,8 @@ ProtectedAction detects whether the object is a script or a navigation target. A
 
 A navigation target may also be hidden. This allows navigation to categories that are normally not visible in the visualization.
 
+A navigation target is only as protected as its object ID: a visualization client that knows the ID may be able to open the target directly, and the ID is transmitted to all connected clients after a successful entry. For hidden menus, [HiddenMenu](https://github.com/wowbagger60/HiddenMenu) is usually the better and simpler choice. ProtectedAction is primarily intended for protected script actions.
+
 ### 4. Set up the Super PIN
 
 Register a separate Super PIN for unlocking the instance later:
@@ -136,9 +138,43 @@ No preceding `PRACT_BeginRecovery()` call is required. A correct Super PIN unloc
 | Key labels | ENTER / CLEAR | **ENTER / CLEAR** or **OK / CLEAR** (translated, for example OK / LÖSCHEN). |
 | Pattern trail | Prominent | **Prominent:** reached points are highlighted and connected. **Fading:** only the finger trail, fading out. **Invisible:** no trail, for places where others might watch. |
 
+### Notifications
+
+Under **Notifications**, choose a script and the event groups for which it should run. The script runs in the background and receives these values in `$_IPS`:
+
+| Key | Content |
+| --- | --- |
+| `SENDER` | `ProtectedAction` |
+| `INSTANCE` | ID of the ProtectedAction instance |
+| `EVENT` | Event code, see below |
+| `SOURCE` | `Visualization` for input on the tile, otherwise `Script` |
+| `FAILED_ATTEMPTS`, `RECOVERY_FAILED_ATTEMPTS` | Current failure counters |
+| `LOCK_UNTIL`, `PERMANENTLY_LOCKED` | Current lock state |
+| `TIME` | Unix timestamp |
+
+| Group | Events |
+| --- | --- |
+| Failed attempts | `FAILED_ATTEMPT` |
+| Temporary and permanent locks | `TEMPORARILY_LOCKED`, `PERMANENTLY_LOCKED` |
+| Executed actions | `ACTION_EXECUTED`, `ACTION_FAILED`, `VISUALIZATION_REQUIRED` |
+| Recovery and unlocking | `RECOVERY_STARTED`, `SUPER_PIN_INVALID`, `UNLOCKED` |
+| Reset and required re-registration | `RESET`, `REREGISTRATION_REQUIRED` |
+
+Codes, script contents, parameters and navigation targets are never passed. Example:
+
+```php
+<?php
+if ($_IPS['SENDER'] === 'ProtectedAction' && $_IPS['EVENT'] === 'PERMANENTLY_LOCKED') {
+    // Replace with your own notification, for example a push message or an e-mail.
+    IPS_LogMessage('ProtectedAction', 'Instance ' . $_IPS['INSTANCE'] . ' is permanently locked');
+}
+```
+
 ### Scope of protection
 
 ProtectedAction protects stored actions with encryption, failure lockouts and optional code binding. It is intended as a convenience safeguard and does not replace Symcon access controls. An administrator of the Symcon system can also modify the input process. Other system objects and files are not protected by the module. In particular, the original action script remains readable until it is deleted.
+
+Access codes travel from the tile to Symcon over the visualization connection. Use HTTPS (for example through Symcon Connect) whenever the visualization is used outside a trusted network.
 
 ## API
 
@@ -150,7 +186,7 @@ Every call takes the ProtectedAction instance ID as its first argument. Always p
 | --- | --- | --- | --- |
 | `PRACT_RegisterAction` | `string $PIN, int $ObjectID, array $Parameters` | `bool` | Import an action script with parameters or register a navigation target. `$PIN` contains a PIN or pattern according to the instance mode. Pass `[]` for unused parameters. Reusing the access code replaces the action. |
 | `PRACT_RegisterActionEx` | `string $PIN, int $ObjectID, array $Parameters, bool $ShowOutput` | `bool` | Like `PRACT_RegisterAction`, optionally showing the script output on the tile. `$ShowOutput` is only allowed for scripts. |
-| `PRACT_Unregister` | `string $PIN` | `bool` | Remove the action assigned to the PIN or pattern. Returns `false` if the code is invalid or unregistered. |
+| `PRACT_Unregister` | `string $PIN` | `bool` | Remove the action assigned to the PIN or pattern. Returns `false` if the code is invalid or unregistered. An unknown code counts as a failed attempt, and nothing is checked while the instance is locked. |
 | `PRACT_RegisterSuperPIN` | `string $PIN` | `bool` | Register the numeric Super PIN once. Returns `false` if a Super PIN already exists; a new one requires a reset. |
 | `PRACT_Reset` | None | `void` | Delete all actions and the Super PIN, reset locks and counters, and allow input mode and code binding to be changed. |
 
@@ -166,7 +202,7 @@ For interactive recovery, call `PRACT_BeginRecovery(12345)`, enter the Super PIN
 
 `Unlock()` and interactive entry share the same recovery counter. Once the recovery attempt limit is exhausted, even a correct Super PIN is rejected. The administrator can explicitly start a new round with `PRACT_BeginRecovery()`. Repeated `Unlock()` calls do not reset the counter.
 
-If the instance is not permanently locked or has no registered Super PIN, `Unlock()` returns `false` without consuming an attempt.
+If the instance is not permanently locked or has no registered Super PIN, `Unlock()` returns `false` without consuming an attempt. This also applies to a temporary lock: it cannot be lifted and simply expires. Only `PRACT_Reset()` clears it, together with all registrations.
 
 ### Custom controls and status
 

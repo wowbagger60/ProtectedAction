@@ -34,7 +34,6 @@
             "Input mode is locked. Restore the registered mode or reset all registrations.": "Der Eingabemodus ist gesperrt. Ursprünglichen Modus wiederherstellen oder alle Registrierungen zurücksetzen.",
             "Recovery mode": "Wiederherstellungsmodus",
             "Protected actions: %d": "Geschützte Aktionen: %d",
-            "Input mode and code binding are locked after the first action or Super PIN registration. Changing either requires a reset.": "Eingabemodus und Codebindung sind nach der ersten Aktion oder Super-PIN-Registrierung gesperrt. Ein Wechsel erfordert einen Reset.",
             "Require re-registration after module code changes": "Bei Änderungen am Modulcode Neuregistrierung verlangen",
             "When code binding is disabled, registrations survive compatible module updates. Code binding remains enabled by default.": "Ohne Codebindung bleiben Registrierungen bei kompatiblen Modulupdates erhalten. Standardmässig ist die Codebindung eingeschaltet.",
             "Code binding is locked. Restore the registered setting or reset all registrations.": "Die Codebindung ist gesperrt. Ursprüngliche Einstellung wiederherstellen oder alle Registrierungen zurücksetzen.",
@@ -84,7 +83,17 @@
             "Pattern trail": "Musterspur",
             "Prominent": "Markant",
             "Fading": "Verblassend",
-            "Invisible": "Unsichtbar"
+            "Invisible": "Unsichtbar",
+            "Notifications": "Benachrichtigungen",
+            "The script receives SENDER, INSTANCE, EVENT, SOURCE, FAILED_ATTEMPTS, RECOVERY_FAILED_ATTEMPTS, LOCK_UNTIL, PERMANENTLY_LOCKED and TIME in $_IPS. Codes and action details are never passed.": "Das Script erhält SENDER, INSTANCE, EVENT, SOURCE, FAILED_ATTEMPTS, RECOVERY_FAILED_ATTEMPTS, LOCK_UNTIL, PERMANENTLY_LOCKED und TIME in $_IPS. Codes und Details zu Aktionen werden nie übergeben.",
+            "Notification script": "Benachrichtigungsscript",
+            "Failed attempts": "Fehlversuche",
+            "Temporary and permanent locks": "Vorübergehende und dauerhafte Sperren",
+            "Executed actions": "Ausgeführte Aktionen",
+            "Recovery and unlocking": "Wiederherstellung und Entsperren",
+            "Reset and required re-registration": "Zurücksetzen und erforderliche Neuregistrierung",
+            "Input mode, code binding and the lock settings (delays, permanent lock, recovery attempts) are locked after the first action or Super PIN registration. Changing them requires a reset.": "Eingabemodus, Codebindung und die Sperreinstellungen (Verzögerungen, dauerhafte Sperre, Wiederherstellungsversuche) sind nach der ersten Aktion oder Super-PIN-Registrierung gesperrt. Ein Wechsel erfordert einen Reset.",
+            "Lock settings are locked. Restore the registered values or reset all registrations.": "Die Sperreinstellungen sind gesperrt. Ursprüngliche Werte wiederherstellen oder alle Registrierungen zurücksetzen."
         }
     }
 }

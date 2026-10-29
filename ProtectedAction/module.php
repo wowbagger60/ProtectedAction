@@ -38,6 +38,25 @@ class ProtectedAction extends IPSModuleStrict
     // client only; other tiles never show the outcome of someone else's entry.
     private ?string $resultRequestID = null;
     private ?string $result = null;
+    // True while a tile submission is processed; reported as SOURCE to the notification script.
+    private bool $fromVisualization = false;
+
+    private const LOCK_LIMIT_PROPERTIES = ['DelayAfterFailures', 'BaseDelay', 'PermanentLockAfter', 'RecoveryAttempts'];
+
+    // Notification events and the property that enables each group.
+    private const NOTIFICATION_GROUPS = [
+        'FAILED_ATTEMPT'          => 'NotifyFailedAttempts',
+        'TEMPORARILY_LOCKED'      => 'NotifyLocks',
+        'PERMANENTLY_LOCKED'      => 'NotifyLocks',
+        'ACTION_EXECUTED'         => 'NotifyActions',
+        'ACTION_FAILED'           => 'NotifyActions',
+        'VISUALIZATION_REQUIRED'  => 'NotifyActions',
+        'RECOVERY_STARTED'        => 'NotifyRecovery',
+        'SUPER_PIN_INVALID'       => 'NotifyRecovery',
+        'UNLOCKED'                => 'NotifyRecovery',
+        'RESET'                   => 'NotifyAdministration',
+        'REREGISTRATION_REQUIRED' => 'NotifyAdministration'
+    ];
 
     public function Create(): void
     {
@@ -49,6 +68,12 @@ class ProtectedAction extends IPSModuleStrict
         $this->RegisterPropertyInteger('DelayAfterFailures', 3);
         $this->RegisterPropertyInteger('BaseDelay', 20);
         $this->RegisterPropertyInteger('PermanentLockAfter', 5);
+        $this->RegisterPropertyInteger('NotificationScript', 1); // Below 10000 = none
+        $this->RegisterPropertyBoolean('NotifyFailedAttempts', false);
+        $this->RegisterPropertyBoolean('NotifyLocks', true);
+        $this->RegisterPropertyBoolean('NotifyActions', false);
+        $this->RegisterPropertyBoolean('NotifyRecovery', true);
+        $this->RegisterPropertyBoolean('NotifyAdministration', true);
         $this->RegisterPropertyInteger('InputTimeout', 20);
         $this->RegisterPropertyInteger('RecoveryAttempts', 3);
         $this->RegisterPropertyInteger('MessageDuration', 3);
@@ -69,6 +94,8 @@ class ProtectedAction extends IPSModuleStrict
         $this->RegisterAttributeBoolean('PermanentlyLocked', false);
         $this->RegisterAttributeBoolean('RecoveryMode', false);
         $this->RegisterAttributeInteger('RecoveryFailedAttempts', 0);
+        $this->RegisterAttributeBoolean('ReregistrationReported', false);
+        $this->RegisterAttributeString('RegisteredLimits', '');
 
         $this->RegisterVariableString('Status', 'Status');
         $this->RegisterTimer('MessageTimer', 0, 'PRACT_InternalTimer($_IPS["TARGET"], "Message");');
@@ -98,6 +125,10 @@ class ProtectedAction extends IPSModuleStrict
         if ($this->ReadAttributeInteger('RegisteredCodeBinding') === -1 && $this->HasRegistrations()) {
             $this->WriteAttributeInteger('RegisteredCodeBinding', 1);
         }
+        // Registrations from versions without frozen lock settings adopt the current values.
+        if ($this->ReadAttributeString('RegisteredLimits') === '' && $this->HasRegistrations()) {
+            $this->WriteAttributeString('RegisteredLimits', $this->LockLimits());
+        }
         $error = $this->ConfigurationError();
         if ($error !== '') {
             $this->SetStatus(202);
@@ -118,6 +149,20 @@ class ProtectedAction extends IPSModuleStrict
         $this->UpdateSummary();
         $this->PublishStatus();
         $this->ReloadForm();
+        // Scripts cannot run during kernel startup; report a code change once the kernel is ready.
+        if (IPS_GetKernelRunlevel() === KR_READY) {
+            $this->ReportReregistration();
+        } else {
+            $this->RegisterMessage(0, IPS_KERNELSTARTED);
+        }
+    }
+
+    public function MessageSink(int $TimeStamp, int $SenderID, int $Message, array $Data): void
+    {
+        if ($Message === IPS_KERNELSTARTED) {
+            $this->UnregisterMessage(0, IPS_KERNELSTARTED);
+            $this->ReportReregistration();
+        }
     }
 
     public function GetConfigurationForm(): string
@@ -127,6 +172,10 @@ class ProtectedAction extends IPSModuleStrict
             switch ($element['name'] ?? '') {
                 case 'InputMode':
                 case 'BindToModuleCode':
+                case 'DelayAfterFailures':
+                case 'BaseDelay':
+                case 'PermanentLockAfter':
+                case 'RecoveryAttempts':
                     $element['enabled'] = !$this->ModeIsLocked();
                     break;
                 case 'ConfigurationError':
@@ -382,6 +431,7 @@ class ProtectedAction extends IPSModuleStrict
             $this->ClearTransientMessage();
             $this->UpdateSummary();
             $this->PublishStatus();
+            $this->Notify('RECOVERY_STARTED');
             return true;
         }, false);
     }
@@ -412,6 +462,8 @@ class ProtectedAction extends IPSModuleStrict
             $this->WriteAttributeBoolean('PermanentlyLocked', false);
             $this->WriteAttributeBoolean('RecoveryMode', false);
             $this->WriteAttributeInteger('RecoveryFailedAttempts', 0);
+            $this->WriteAttributeBoolean('ReregistrationReported', false);
+            $this->WriteAttributeString('RegisteredLimits', '');
             $this->SetTimerInterval('LockTimer', 0);
             $this->ClearInput();
             $this->ClearTransientMessage();
@@ -421,6 +473,7 @@ class ProtectedAction extends IPSModuleStrict
                 $this->SetStatus(102);
             }
             $this->ReloadForm();
+            $this->Notify('RESET');
             return true;
         }, false);
     }
@@ -587,18 +640,25 @@ class ProtectedAction extends IPSModuleStrict
 
     private function RemoveAction(string $PIN): bool
     {
-        $normalized = $this->NormalizeAccessCode($PIN, false);
-        if (!$this->CryptoAvailable() || $this->ConfigurationError() !== '' || $this->ReregistrationRequired() ||
-            $normalized === null) {
+        // Unregister reveals whether a code exists, so it is subject to the same lockout as entries.
+        if (!$this->InputAllowed() || $this->ReadAttributeBoolean('PermanentlyLocked')) {
             return false;
         }
+        $normalized = $this->NormalizeAccessCode($PIN, false);
         sodium_memzero($PIN);
+        if ($normalized === null) {
+            return $this->HandleFailure();
+        }
+        // Count the attempt before the expensive check: an aborted check must not be free.
+        $attempts = $this->ReadAttributeInteger('FailedAttempts') + 1;
+        $this->WriteAttributeInteger('FailedAttempts', $attempts);
         $actions = $this->ReadActions();
         $match = $this->FindAction($normalized, $actions);
         sodium_memzero($normalized);
         if ($match === null) {
-            return false;
+            return $this->ApplyFailure($attempts);
         }
+        $this->WriteAttributeInteger('FailedAttempts', 0);
         sodium_memzero($match['plainText']);
         unset($actions[$match['recordID']]);
         $this->WriteActions($actions);
@@ -608,6 +668,16 @@ class ProtectedAction extends IPSModuleStrict
     }
 
     private function ProcessSubmission(mixed $Value): bool
+    {
+        $this->fromVisualization = true;
+        try {
+            return $this->ProcessPacket($Value);
+        } finally {
+            $this->fromVisualization = false;
+        }
+    }
+
+    private function ProcessPacket(mixed $Value): bool
     {
         if (!$this->InputAllowed()) {
             return false;
@@ -687,6 +757,7 @@ class ProtectedAction extends IPSModuleStrict
         if ($result['output'] !== null && $RequestID !== null) {
             $this->PublishOutput($result['output'], $RequestID);
         }
+        $this->Notify($result['message']);
         return $result['success'];
     }
 
@@ -713,6 +784,7 @@ class ProtectedAction extends IPSModuleStrict
                 $this->SetTransientMessage('UNLOCKED');
                 $this->UpdateSummary();
                 $this->PublishStatus();
+                $this->Notify('UNLOCKED');
                 return true;
             }
         }
@@ -741,6 +813,7 @@ class ProtectedAction extends IPSModuleStrict
         }
         $this->UpdateSummary();
         $this->PublishStatus();
+        $this->Notify('SUPER_PIN_INVALID');
         return false;
     }
 
@@ -753,23 +826,65 @@ class ProtectedAction extends IPSModuleStrict
 
     private function ApplyFailure(int $Attempts): bool
     {
+        $delayAfter = $this->ReadPropertyInteger('DelayAfterFailures');
+        $lockEvent = null;
         if ($Attempts >= $this->ReadPropertyInteger('PermanentLockAfter')) {
             $this->WriteAttributeBoolean('PermanentlyLocked', true);
             $this->WriteAttributeInteger('LockUntil', 0);
             $this->SetTimerInterval('LockTimer', 0);
             $this->ClearTransientMessage();
-        } elseif ($Attempts >= $this->ReadPropertyInteger('DelayAfterFailures')) {
-            $factor = $Attempts - $this->ReadPropertyInteger('DelayAfterFailures') + 1;
-            $delay = $this->ReadPropertyInteger('BaseDelay') * $factor;
+            $lockEvent = 'PERMANENTLY_LOCKED';
+        } elseif ($Attempts >= $delayAfter) {
+            $delay = $this->ReadPropertyInteger('BaseDelay') * ($Attempts - $delayAfter + 1);
             $this->WriteAttributeInteger('LockUntil', time() + $delay);
             $this->SetTimerInterval('LockTimer', $delay * 1000);
             $this->ClearTransientMessage();
+            $lockEvent = 'TEMPORARILY_LOCKED';
         } else {
             $this->SetTransientMessage('PIN_INVALID');
+        }
+        $this->Notify('FAILED_ATTEMPT');
+        if ($lockEvent !== null) {
+            $this->Notify($lockEvent);
         }
         $this->UpdateSummary();
         $this->PublishStatus();
         return false;
+    }
+
+    // Runs the notification script in the background. Never contains codes or action details.
+    private function Notify(string $Event): void
+    {
+        $property = self::NOTIFICATION_GROUPS[$Event] ?? null;
+        $scriptID = $this->ReadPropertyInteger('NotificationScript');
+        if ($property === null || !$this->ReadPropertyBoolean($property) ||
+            $scriptID < 10000 || !IPS_ScriptExists($scriptID)) {
+            return;
+        }
+        try {
+            IPS_RunScriptEx($scriptID, [
+                'SENDER'                   => 'ProtectedAction',
+                'INSTANCE'                 => $this->InstanceID,
+                'EVENT'                    => $Event,
+                'SOURCE'                   => $this->fromVisualization ? 'Visualization' : 'Script',
+                'FAILED_ATTEMPTS'          => $this->ReadAttributeInteger('FailedAttempts'),
+                'RECOVERY_FAILED_ATTEMPTS' => $this->ReadAttributeInteger('RecoveryFailedAttempts'),
+                'LOCK_UNTIL'               => $this->ReadAttributeInteger('LockUntil'),
+                'PERMANENTLY_LOCKED'       => $this->ReadAttributeBoolean('PermanentlyLocked'),
+                'TIME'                     => time()
+            ]);
+        } catch (Throwable $e) {
+            $this->SendDebug('Notify', $e->getMessage(), 0);
+        }
+    }
+
+    // Reports a module code change once until the next reset.
+    private function ReportReregistration(): void
+    {
+        if ($this->ReregistrationRequired() && !$this->ReadAttributeBoolean('ReregistrationReported')) {
+            $this->WriteAttributeBoolean('ReregistrationReported', true);
+            $this->Notify('REREGISTRATION_REQUIRED');
+        }
     }
 
     private function ExecutePayload(string $PlainText, ?string $RequestID): array
@@ -1145,13 +1260,15 @@ class ProtectedAction extends IPSModuleStrict
     private function ModeIsLocked(): bool
     {
         return $this->ReadAttributeInteger('RegisteredInputMode') !== -1 ||
-            $this->ReadAttributeInteger('RegisteredCodeBinding') !== -1 || $this->HasRegistrations();
+            $this->ReadAttributeInteger('RegisteredCodeBinding') !== -1 ||
+            $this->ReadAttributeString('RegisteredLimits') !== '' || $this->HasRegistrations();
     }
 
     private function LockRegistrationOptions(): void
     {
         $this->WriteAttributeInteger('RegisteredInputMode', $this->ReadPropertyInteger('InputMode'));
         $this->WriteAttributeInteger('RegisteredCodeBinding', (int) $this->ReadPropertyBoolean('BindToModuleCode'));
+        $this->WriteAttributeString('RegisteredLimits', $this->LockLimits());
         $this->ReloadForm();
     }
 
@@ -1176,7 +1293,22 @@ class ProtectedAction extends IPSModuleStrict
             $registeredBinding !== (int) $this->ReadPropertyBoolean('BindToModuleCode')) {
             return $this->Translate('Code binding is locked. Restore the registered setting or reset all registrations.');
         }
+        $registeredLimits = $this->ReadAttributeString('RegisteredLimits');
+        if ($registeredLimits !== '' && $registeredLimits !== $this->LockLimits()) {
+            return $this->Translate('Lock settings are locked. Restore the registered values or reset all registrations.');
+        }
         return '';
+    }
+
+    // Settings that bound guessing. Frozen with the first registration: otherwise anyone able to
+    // change the configuration could raise the limits and guess codes quickly.
+    private function LockLimits(): string
+    {
+        $limits = [];
+        foreach (self::LOCK_LIMIT_PROPERTIES as $property) {
+            $limits[$property] = $this->ReadPropertyInteger($property);
+        }
+        return json_encode($limits, JSON_THROW_ON_ERROR);
     }
 
     private function StateError(): string
