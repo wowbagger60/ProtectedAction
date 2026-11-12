@@ -1,8 +1,8 @@
 {
     "id": "{7A69147E-7D84-4C83-AF2D-5D8C90BDF013}",
-    "author": "Ulrich Schweizer",
+    "author": "Ueli Schweizer",
     "name": "ProtectedAction",
-    "url": "https://www.cassanisautomation.fr",
+    "url": "https://github.com/wowbagger60/ProtectedAction",
     "compatibility": {
         "version": "8.1"
     },

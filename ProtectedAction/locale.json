@@ -57,7 +57,7 @@
             "Super PIN for unlocking": "Super-PIN zum Entsperren",
             "Unlock": "Entsperren",
             "Reset": "Zurücksetzen",
-            "Deletes all actions and the Super PIN and releases input mode and code binding.": "Löscht alle Aktionen und den Super-PIN und gibt Eingabemodus und Codebindung frei.",
+            "Deletes all actions and the Super PIN and releases input mode, code binding and the lock settings.": "Löscht alle Aktionen und den Super-PIN und gibt Eingabemodus, Codebindung und Sperreinstellungen frei.",
             "Reset all registrations": "Alle Registrierungen zurücksetzen",
             "Delete all actions and the Super PIN?": "Alle Aktionen und den Super-PIN löschen?",
             "The codes do not match.": "Die Codes stimmen nicht überein.",
